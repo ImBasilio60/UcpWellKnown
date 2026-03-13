@@ -1,0 +1,25 @@
+for apache server:
+    $ nano /var/www/html/prestashop/.htaccess
+
+        RewriteEngine on
+
+        # Well-known
+        RewriteRule ^\.well-known/ucp$ index.php?fc=module&module=ucpwellknown&controller=ucp [QSA,L]
+    
+    $ sudo systemctl restart apache2
+
+for nginx server:
+    $ nano /etc/nginx/sites-available/prestashop
+
+    server {
+
+        # --- UCP endpoint ---
+        location = /.well-known/ucp {
+            # Redirige vers le contrôleur module
+            rewrite ^ /index.php?fc=module&module=ucpwellknown&controller=ucp last;
+        }
+
+    }
+
+    $ sudo systemctl restart nginx
+    $ sudo nginx -t
