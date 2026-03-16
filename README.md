@@ -30,17 +30,20 @@ ucpwellknown/
 ├── classes/
 │   ├── UcpHeaderValidator.php     # Header validation middleware
 │   ├── UcpItemConverter.php       # Product to UCP Item converter
-│   └── UcpOrderConverter.php      # Cart to UCP Order converter
+│   ├── UcpOrderConverter.php      # Cart to UCP Order converter
+│   └── UcpBuyerConverter.php     # Customer to UCP Buyer converter
 ├── controllers/
 │   ├── front/
 │   │   ├── ucp.php               # Well-known endpoint
 │   │   ├── api.php               # UCP API endpoint with header validation
 │   │   ├── items.php             # UCP Items API endpoint
-│   │   └── orders.php            # UCP Orders API endpoint
+│   │   ├── orders.php            # UCP Orders API endpoint
+│   │   └── buyers.php            # UCP Buyers API endpoint
 ├── tests/
 │   ├── UcpHeaderValidatorTest.php # Unit tests for header validation
 │   ├── UcpItemConverterTest.php   # Unit tests for item conversion
-│   └── UcpOrderConverterTest.php  # Unit tests for order conversion
+│   ├── UcpOrderConverterTest.php  # Unit tests for order conversion
+│   └── UcpBuyerConverterTest.php  # Unit tests for buyer conversion
 └── README.md
 ```
 
@@ -56,6 +59,9 @@ Access the UCP Items API at: `/prestashop/module/ucpwellknown/items`
 
 #### Orders API
 Access the UCP Orders API at: `/prestashop/module/ucpwellknown/orders`
+
+#### Buyers API
+Access the UCP Buyers API at: `/prestashop/module/ucpwellknown/buyers`
 
 ### Example Request
 
@@ -145,6 +151,55 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/orders" \
   -H "request-signature: sha256=abc123def456..." \
   -H "Content-Type: application/json" \
   -d '{"cart_ids": [1, 2, 3]}'
+```
+
+### UCP Buyer Conversion
+
+#### Get Single Customer
+```bash
+curl -X GET "http://localhost/prestashop/module/ucpwellknown/buyers?customer_id=1" \
+  -H "UCP-Agent: test-client/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: order-12345-unique-key" \
+  -H "request-signature: sha256=abc123def456..."
+```
+
+#### Get All Customers
+```bash
+curl -X GET "http://localhost/prestashop/module/ucpwellknown/buyers?limit=10" \
+  -H "UCP-Agent: test-client/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: order-12345-unique-key" \
+  -H "request-signature: sha256=abc123def456..."
+```
+
+#### Search Customers
+```bash
+curl -X GET "http://localhost/prestashop/module/ucpwellknown/buyers?search=john" \
+  -H "UCP-Agent: test-client/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: order-12345-unique-key" \
+  -H "request-signature: sha256=abc123def456..."
+```
+
+#### Anonymized Customer Data
+```bash
+curl -X GET "http://localhost/prestashop/module/ucpwellknown/buyers?customer_id=1&anonymize=true" \
+  -H "UCP-Agent: test-client/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: order-12345-unique-key" \
+  -H "request-signature: sha256=abc123def456..."
+```
+
+#### Batch Customer Conversion
+```bash
+curl -X POST "http://localhost/prestashop/module/ucpwellknown/buyers" \
+  -H "UCP-Agent: test-client/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: order-12345-unique-key" \
+  -H "request-signature: sha256=abc123def456..." \
+  -H "Content-Type: application/json" \
+  -d '{"customer_ids": [1, 2, 3]}'
 ```
 
 ### Valid Response
@@ -440,6 +495,103 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/orders" \
 }
 ```
 
+### UCP Buyer Response Example
+```json
+{
+    "status": "success",
+    "data": {
+        "id": "1",
+        "name": {
+            "first": "John",
+            "last": "Doe",
+            "full": "John Doe"
+        },
+        "email": "john.doe@example.com",
+        "phone": "+33123456789",
+        "addresses": {
+            "billing": {
+                "id": "10",
+                "type": "residential",
+                "street": {
+                    "line1": "123 Main Street",
+                    "line2": "Apt 4B",
+                    "line3": null
+                },
+                "city": "Paris",
+                "postal_code": "75001",
+                "region": "Île-de-France",
+                "country": {
+                    "code": "FR",
+                    "name": "France"
+                },
+                "phone": "+33123456789",
+                "phone_mobile": "+33612345678",
+                "company": null,
+                "vat_number": null,
+                "metadata": {
+                    "prestashop_address_id": 10,
+                    "dni": null,
+                    "alias": "My Address",
+                    "other": null,
+                    "phone_code": "33",
+                    "phone_mobile_code": "33"
+                }
+            },
+            "shipping": {
+                "id": "11",
+                "type": "residential",
+                "street": {
+                    "line1": "456 Shipping Lane",
+                    "line2": null,
+                    "line3": null
+                },
+                "city": "Lyon",
+                "postal_code": "69001",
+                "region": "Auvergne-Rhône-Alpes",
+                "country": {
+                    "code": "FR",
+                    "name": "France"
+                },
+                "phone": "+33412345678",
+                "phone_mobile": null,
+                "company": null,
+                "vat_number": null,
+                "metadata": {
+                    "prestashop_address_id": 11,
+                    "dni": null,
+                    "alias": "Work Address",
+                    "other": null,
+                    "phone_code": "33",
+                    "phone_mobile_code": null
+                }
+            }
+        },
+        "metadata": {
+            "prestashop_customer_id": 1,
+            "gender": 1,
+            "birthday": "1990-01-01",
+            "newsletter": true,
+            "optin": true,
+            "date_add": "2026-03-16 09:00:00",
+            "date_upd": "2026-03-16 09:30:00",
+            "is_guest": false,
+            "company": null,
+            "siret": null,
+            "ape": null,
+            "website": null,
+            "allow_other_publications": null
+        }
+    },
+    "request_info": {
+        "request_id": "550e8400-e29b-41d4-a716-446655440000",
+        "customer_id": 1,
+        "language_id": 1,
+        "anonymized": false,
+        "timestamp": "2026-03-16T09:30:00+00:00"
+    }
+}
+```
+
 ### Error Response (Missing Headers)
 ```json
 {
@@ -516,6 +668,14 @@ Run the unit tests to validate UCP Order conversion:
 php tests/UcpOrderConverterTest.php
 ```
 
+### Buyer Converter Tests
+
+Run the unit tests to validate UCP Buyer conversion:
+
+```bash
+php tests/UcpBuyerConverterTest.php
+```
+
 ### Test Coverage
 
 #### Header Validation Tests
@@ -544,6 +704,15 @@ php tests/UcpOrderConverterTest.php
 - Empty cart handling
 - Invalid cart handling
 
+#### Buyer Converter Tests
+- Customer with both addresses
+- Customer with only billing address
+- Customer missing optional fields
+- Customer anonymization
+- Multiple customers conversion
+- Customer search functionality
+- Invalid customer handling
+
 ## Implementation Details
 
 ### UcpHeaderValidator Class
@@ -565,6 +734,17 @@ The `UcpItemConverter` class provides:
 - `getProductCombinations()`: Handles product variants/combinations
 - `formatPrice()`: Formats price with currency information
 - `getProductImages()`: Retrieves product images with URLs
+
+### UcpBuyerConverter Class
+
+The `UcpBuyerConverter` class provides:
+
+- `convertCustomerToUcpBuyer()`: Converts a single PrestaShop customer to UCP Buyer format
+- `convertMultipleCustomers()`: Converts multiple customers to UCP Buyers
+- `getCustomerById()`: Retrieves and converts customer by ID
+- `searchCustomers()`: Searches customers by email or name
+- `formatAddress()`: Formats addresses according to UCP specification
+- `anonymizeString()` / `anonymizeEmail()`: GDPR-compliant data anonymization
 
 ### UcpOrderConverter Class
 
@@ -733,6 +913,59 @@ $ucp_order = [
 ];
 ```
 
+#### UCP Buyer Structure
+
+```php
+$ucp_buyer = [
+    'id' => (string) $customer_id,
+    'name' => [
+        'first' => $customer->firstname,
+        'last' => $customer->lastname,
+        'full' => $customer->firstname . ' ' . $customer->lastname
+    ],
+    'email' => $customer->email,
+    'phone' => $phone_number,
+    'addresses' => [
+        'billing' => [
+            'id' => (string) $address_id,
+            'type' => 'residential|business',
+            'street' => [
+                'line1' => $address->address1,
+                'line2' => $address->address2 ?: null,
+                'line3' => null
+            ],
+            'city' => $address->city,
+            'postal_code' => $address->postcode,
+            'region' => $state->name,
+            'country' => [
+                'code' => $country->iso_code,
+                'name' => $country->name
+            ],
+            'phone' => $address->phone,
+            'phone_mobile' => $address->phone_mobile,
+            'company' => $address->company,
+            'vat_number' => $address->vat_number,
+            'metadata' => [...]
+        ],
+        'shipping' => [...] // Same structure as billing
+    ],
+    'metadata' => [
+        'prestashop_customer_id' => (int) $customer_id,
+        'gender' => (int) $customer->gender,
+        'birthday' => $customer->birthday,
+        'newsletter' => (bool) $customer->newsletter,
+        'optin' => (bool) $customer->optin,
+        'date_add' => $customer->date_add,
+        'date_upd' => $customer->date_upd,
+        'is_guest' => (bool) $customer->is_guest,
+        'company' => $customer->company,
+        'siret' => $customer->siret,
+        'ape' => $customer->ape,
+        'website' => $customer->website
+    ]
+];
+```
+
 ### UcpWellKnownApiModuleFrontController
 
 The API controller integrates header validation with request processing:
@@ -766,6 +999,18 @@ The Orders API controller handles UCP Order conversion:
 - Pagination support with `limit` and `offset` parameters
 - Language detection from `Accept-Language` header
 - Complete order totals calculation with tax breakdown
+
+### UcpWellKnownBuyersModuleFrontController
+
+The Buyers API controller handles UCP Buyer conversion:
+
+- Single customer retrieval: `GET /buyers?customer_id={id}`
+- All customers retrieval: `GET /buyers` with pagination
+- Customer search: `GET /buyers?search={query}`
+- Batch conversion: `POST /buyers` with customer_ids array
+- Anonymization support with `anonymize=true` parameter
+- Address inclusion control with `include_billing` and `include_shipping` parameters
+- Language detection from `Accept-Language` header
 
 ## HTTP Methods Supported
 
