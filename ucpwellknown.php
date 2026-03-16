@@ -22,7 +22,11 @@ class UcpWellKnown extends Module
 
     public function install()
     {
-        return parent::install();
+        if (!parent::install()) {
+            return false;
+        }
+        
+        return true;
     }
 
     public function uninstall()
