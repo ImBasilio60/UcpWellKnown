@@ -234,6 +234,15 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
     private function handleGetCheckoutSession($headers, $log_data)
     {
+        // Check if a specific checkout session ID is provided
+        $checkout_session_id = $_GET['checkout_session_id'] ?? null;
+        
+        if ($checkout_session_id) {
+            // Retrieve specific checkout session details
+            return $this->getCheckoutSessionDetails($checkout_session_id, $headers, $log_data);
+        }
+        
+        // Return general endpoint information
         return [
             'status' => 'success',
             'message' => 'UCP Checkout Sessions endpoint',
@@ -245,10 +254,72 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
             ],
             'endpoints' => [
                 'POST /checkout-sessions' => 'Create a new checkout session',
-                'GET /checkout-sessions/{id}' => 'Retrieve checkout session details',
-                'PUT /checkout-sessions/{id}' => 'Update checkout session (apply/remove promo codes)'
+                'GET /checkout-sessions?checkout_session_id={id}' => 'Retrieve checkout session details',
+                'PUT /checkout-sessions?checkout_session_id={id}' => 'Update checkout session (apply/remove promo codes)'
             ]
         ];
+    }
+
+    private function getCheckoutSessionDetails($checkout_session_id, $headers, $log_data)
+    {
+        try {
+            // Validate checkout session ID format
+            if (empty($checkout_session_id) || !preg_match('/^ucs_[a-f0-9]+_\d+_\d+$/', $checkout_session_id)) {
+                header('HTTP/1.1 400 Bad Request');
+                return [
+                    'error' => 'Invalid checkout session ID format',
+                    'code' => 400,
+                    'timestamp' => date('c')
+                ];
+            }
+
+            // Get cart details using the checkout session ID
+            $cart_result = $this->cart_manager->getCartByCheckoutSessionId($checkout_session_id);
+            
+            if (!$cart_result['success']) {
+                header('HTTP/1.1 404 Not Found');
+                return [
+                    'error' => 'Checkout session not found',
+                    'code' => 404,
+                    'timestamp' => date('c')
+                ];
+            }
+
+            $cart = $cart_result['cart'];
+            
+            // Get cart details and totals
+            $cart_details = $this->cart_manager->getCartDetails($cart->id);
+            $cart_totals = $this->cart_manager->calculateCartTotals($cart->id);
+            
+            // Get applied promotional rules
+            $applied_rules = $this->cart_manager->getAppliedRules($cart->id);
+            
+            // Build response
+            return [
+                'status' => 'success',
+                'checkout_id' => $checkout_session_id,
+                'cart_id' => $cart->id,
+                'customer_id' => $cart->id_customer,
+                'items' => $cart_details['products'],
+                'totals' => $cart_totals,
+                'applied_rules' => $applied_rules,
+                'created_at' => date('c', strtotime($cart->date_add)),
+                'request_info' => [
+                    'request_id' => $headers['request-id'],
+                    'ucp_agent' => $headers['ucp-agent'],
+                    'timestamp' => $log_data['timestamp']
+                ]
+            ];
+
+        } catch (Exception $e) {
+            header('HTTP/1.1 500 Internal Server Error');
+            return [
+                'error' => 'Internal server error',
+                'code' => 500,
+                'message' => $e->getMessage(),
+                'timestamp' => date('c')
+            ];
+        }
     }
 
     private function getCheckoutSessionId()

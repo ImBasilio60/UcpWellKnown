@@ -62,10 +62,9 @@ ucpwellknown/
 Creates a new checkout session with validated products and returns a unique checkout ID.
 
 #### Update Checkout Session (NEW)
-**Endpoint**: `PUT /prestashop/module/ucpwellknown/checkout_sessions/{checkoutSessionId}`
+**Endpoint**: `PUT /prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}`
 
-**Alternative Endpoint** (due to PrestaShop routing limitations):
-`POST /prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}`
+**Note**: Due to PrestaShop routing limitations, PUT requests are handled as POST requests with the checkout session ID passed as a query parameter.
 
 Updates an existing checkout session to apply or remove promotional codes.
 
@@ -75,7 +74,7 @@ Updates an existing checkout session to apply or remove promotional codes.
 - `idempotency-key`: Unique operation key
 - `request-signature`: Request signature
 
-**Request Body (PUT/POST)**
+**Request Body**
 ```json
 {
   "promo_code": "PROMO123"
@@ -610,6 +609,8 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?
   }'
 ```
 
+**Note**: This uses POST method but is handled as PUT by the server due to PrestaShop routing limitations.
+
 #### Remove Promo Code
 ```bash
 curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}" \
@@ -622,6 +623,8 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?
     "promo_code": ""
   }'
 ```
+
+**Note**: This uses POST method but is handled as PUT by the server due to PrestaShop routing limitations.
 
 ## Error Codes
 
