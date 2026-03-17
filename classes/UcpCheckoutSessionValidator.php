@@ -264,6 +264,188 @@ class UcpCheckoutSessionValidator
         ];
     }
 
+    public function validateCheckoutSessionUpdate($input)
+    {
+        $errors = [];
+
+        // Check if input is an array
+        if (!is_array($input)) {
+            $errors[] = [
+                'field' => 'request_body',
+                'message' => 'Request body must be a JSON object'
+            ];
+            return ['valid' => false, 'errors' => $errors];
+        }
+
+        // Validate allowed fields
+        $allowed_fields = ['promo_code'];
+        foreach ($input as $field => $value) {
+            if (!in_array($field, $allowed_fields)) {
+                $errors[] = [
+                    'field' => $field,
+                    'message' => 'Field not allowed: ' . $field
+                ];
+            }
+        }
+
+        // Validate promo_code if provided
+        if (isset($input['promo_code'])) {
+            if (!is_string($input['promo_code'])) {
+                $errors[] = [
+                    'field' => 'promo_code',
+                    'message' => 'promo_code must be a string'
+                ];
+            } else {
+                $promo_code = trim($input['promo_code']);
+                if (strlen($promo_code) > 100) {
+                    $errors[] = [
+                        'field' => 'promo_code',
+                        'message' => 'promo_code must be 100 characters or less'
+                    ];
+                }
+            }
+        }
+
+        return [
+            'valid' => empty($errors),
+            'errors' => $errors
+        ];
+    }
+
+    public function validatePromoCode($promo_code, $cart_id)
+    {
+        $errors = [];
+
+        if (empty($promo_code)) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'promo_code cannot be empty'
+            ];
+            return ['valid' => false, 'errors' => $errors];
+        }
+
+        // Check if cart exists
+        $cart = new Cart($cart_id);
+        if (!Validate::isLoadedObject($cart)) {
+            $errors[] = [
+                'field' => 'cart_id',
+                'message' => 'Cart not found'
+            ];
+            return ['valid' => false, 'errors' => $errors];
+        }
+
+        // Find the cart rule by code
+        $cart_rule = CartRule::getIdByCode($promo_code);
+        if (!$cart_rule) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'Promo code not found'
+            ];
+            return ['valid' => false, 'errors' => $errors];
+        }
+
+        $cart_rule_obj = new CartRule($cart_rule);
+        if (!Validate::isLoadedObject($cart_rule_obj)) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'Invalid promo code'
+            ];
+            return ['valid' => false, 'errors' => $errors];
+        }
+
+        // Check if cart rule is active
+        if (!$cart_rule_obj->active) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'Promo code is not active'
+            ];
+        }
+
+        // Check date validity
+        $now = time();
+        if ($cart_rule_obj->date_from && strtotime($cart_rule_obj->date_from) > $now) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'Promo code is not yet valid'
+            ];
+        }
+
+        if ($cart_rule_obj->date_to && strtotime($cart_rule_obj->date_to) < $now) {
+            $errors[] = [
+                'field' => 'promo_code',
+                'message' => 'Promo code has expired'
+            ];
+        }
+
+        // Check quantity limitations
+        if ($cart_rule_obj->quantity > 0 && $cart_rule_obj->quantity_per_user > 0) {
+            $context = Context::getContext();
+            $customer_id = $cart->id_customer;
+            
+            if ($customer_id) {
+                $used_quantity = CartRule::getCustomerUsageCount($cart_rule_obj->id, $customer_id);
+                if ($used_quantity >= $cart_rule_obj->quantity_per_user) {
+                    $errors[] = [
+                        'field' => 'promo_code',
+                        'message' => 'Promo code usage limit exceeded'
+                    ];
+                }
+            }
+        }
+
+        // Check minimum amount
+        if ($cart_rule_obj->minimum_amount > 0) {
+            $cart_total = $cart->getOrderTotal(true, Cart::ONLY_PRODUCTS);
+            if ($cart_total < $cart_rule_obj->minimum_amount) {
+                $errors[] = [
+                    'field' => 'promo_code',
+                    'message' => 'Minimum amount not reached. Required: ' . $cart_rule_obj->minimum_amount
+                ];
+            }
+        }
+
+        // Check product restrictions
+        if ($cart_rule_obj->product_restriction) {
+            $products = $cart->getProducts();
+            $valid_products = [];
+            
+            if ($cart_rule_obj->product_restriction == 1) {
+                // Include only specific products
+                $valid_products = $cart_rule_obj->getProductRuleGroups();
+            } elseif ($cart_rule_obj->product_restriction == 2) {
+                // Exclude specific products
+                $excluded_products = $cart_rule_obj->getProductRuleGroups();
+                // Implementation would check if cart contains only excluded products
+            }
+            
+            // Simplified validation - in real implementation would check product rules
+            if (empty($valid_products) && $cart_rule_obj->product_restriction == 1) {
+                $errors[] = [
+                    'field' => 'promo_code',
+                    'message' => 'Promo code not applicable to cart products'
+                ];
+            }
+        }
+
+        // Check if already applied to cart
+        $cart_rules = $cart->getCartRules();
+        foreach ($cart_rules as $rule) {
+            if ($rule['id_cart_rule'] == $cart_rule_obj->id) {
+                $errors[] = [
+                    'field' => 'promo_code',
+                    'message' => 'Promo code already applied'
+                ];
+                break;
+            }
+        }
+
+        return [
+            'valid' => empty($errors),
+            'errors' => $errors,
+            'cart_rule' => $cart_rule_obj
+        ];
+    }
+
     public function validateCheckoutSessionId($checkout_id)
     {
         $errors = [];

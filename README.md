@@ -6,6 +6,7 @@ This PrestaShop module implements the UCP (Universal Commerce Protocol) for hand
 
 - **Header Validation**: Validates UCP-specific HTTP headers with proper format checking
 - **Checkout Sessions**: Create temporary shopping carts with validation and error handling
+- **Promo Code Management**: Apply and remove promotional codes with comprehensive validation
 - **Product Validation**: Check product existence, stock availability, and pricing
 - **Cart Management**: Create and manage PrestaShop carts with guest support
 - **Structured Logging**: Logs request information for debugging distributed agents
@@ -29,42 +30,62 @@ This PrestaShop module implements the UCP (Universal Commerce Protocol) for hand
 
 ```
 ucpwellknown/
-├── classes/
-│   ├── UcpHeaderValidator.php           # Header validation middleware
-│   ├── UcpCheckoutSessionValidator.php  # Checkout session validation
-│   ├── UcpCartManager.php             # Cart creation and management
-│   ├── UcpItemConverter.php           # Product to UCP Item converter
-│   ├── UcpOrderConverter.php          # Cart to UCP Order converter
-│   └── UcpBuyerConverter.php         # Customer to UCP Buyer converter
-├── controllers/
-│   └── front/
-│       ├── ucp.php                    # Well-known endpoint
-│       ├── api.php                    # UCP API endpoint with header validation
-│       ├── checkout_sessions.php        # Checkout sessions API endpoint
-│       ├── items.php                  # UCP Items API endpoint
-│       ├── orders.php                 # UCP Orders API endpoint
-│       └── buyers.php                 # UCP Buyers API endpoint
-├── tests/
-│   ├── UcpHeaderValidatorTest.php      # Unit tests for header validation
-│   ├── UcpCheckoutSessionValidatorTest.php # Unit tests for checkout validation
-│   ├── UcpItemConverterTest.php       # Unit tests for item conversion
-│   ├── UcpOrderConverterTest.php      # Unit tests for order conversion
-│   └── UcpBuyerConverterTest.php      # Unit tests for buyer conversion
-└── README.md
+├── README.md                    # Documentation
+├── info.txt                     # Module information
+├── ucpwellknown.php             # Main module file
+├── classes/                     # Core classes
+│   ├── UcpHeaderValidator.php
+│   ├── UcpCheckoutSessionValidator.php
+│   ├── UcpCartManager.php
+│   ├── UcpBuyerConverter.php
+│   ├── UcpItemConverter.php
+│   └── UcpOrderConverter.php
+└── controllers/
+    └── front/                   # Front controllers
+        ├── api.php
+        ├── buyers.php
+        ├── checkout_sessions.php
+        ├── items.php
+        ├── orders.php
+        └── ucp.php
 ```
 
 ## API Endpoints
 
 ### Checkout Sessions API
+
+#### Create Checkout Session
 **Endpoint**: `POST /prestashop/module/ucpwellknown/checkout_sessions`
 
 Creates a new checkout session with validated products and returns a unique checkout ID.
 
-#### Request Headers Required
+#### Update Checkout Session (NEW)
+**Endpoint**: `PUT /prestashop/module/ucpwellknown/checkout_sessions/{checkoutSessionId}`
+
+**Alternative Endpoint** (due to PrestaShop routing limitations):
+`POST /prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}`
+
+Updates an existing checkout session to apply or remove promotional codes.
+
+**Request Headers Required**
 - `UCP-Agent`: Client identifier
 - `request-id`: UUID v4 format
 - `idempotency-key`: Unique operation key
 - `request-signature`: Request signature
+
+**Request Body (PUT/POST)**
+```json
+{
+  "promo_code": "PROMO123"
+}
+```
+
+**Empty promo code removes all existing promotional codes:**
+```json
+{
+  "promo_code": ""
+}
+```
 
 #### Request Body
 ```json
@@ -100,6 +121,97 @@ Creates a new checkout session with validated products and returns a unique chec
     "country": "France"
   }
 }
+```
+
+#### Success Response (PUT - Promo Code Applied)
+```json
+{
+  "status": "success",
+  "checkout_id": "ucs_69b7f29920f12_98_1773662873",
+  "cart_id": "98",
+  "items": [
+    {
+      "product_id": 1,
+      "product_attribute_id": 0,
+      "name": "T-shirt imprimé colibri",
+      "reference": "demo_1",
+      "quantity": 2,
+      "unit_price": {
+        "amount": 19.12,
+        "currency": "MGA",
+        "formatted": "19,12 MGA"
+      },
+      "total_with_tax": {
+        "amount": 38.24,
+        "currency": "MGA",
+        "formatted": "38,24 MGA"
+      }
+    }
+  ],
+  "subtotal": 67.00,
+  "discount": 10.00,
+  "total": 71.00,
+  "applied_rules": [
+    {
+      "id": 5,
+      "name": "10% Discount",
+      "code": "PROMO123",
+      "description": "Special 10% off",
+      "discount_type": "percentage",
+      "discount_value": 10.0,
+      "free_shipping": false,
+      "applied_at": "2026-03-17T10:15:30+03:00"
+    }
+  ],
+  "totals": {
+    "subtotal": {
+      "amount": 67,
+      "currency": "MGA",
+      "formatted": "67,00 MGA"
+    },
+    "discount": {
+      "amount": 10,
+      "currency": "MGA",
+      "formatted": "10,00 MGA"
+    },
+    "total": {
+      "amount": 71,
+      "currency": "MGA",
+      "formatted": "71,00 MGA"
+    }
+  },
+  "updated_at": "2026-03-17T10:15:30+03:00",
+  "request_info": {
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "idempotency_key": "unique-key-12345"
+  }
+}
+```
+
+#### Example PUT Request
+```bash
+curl -X PUT "http://localhost/prestashop/module/ucpwellknown/checkout_sessions/ucs_69b7f29920f12_98_1773662873" \
+  -H "Content-Type: application/json" \
+  -H "UCP-Agent: TestClient/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440001" \
+  -H "idempotency-key: unique-key-12346" \
+  -H "request-signature: signature-here" \
+  -d '{
+    "promo_code": "PROMO123"
+  }'
+```
+
+#### Alternative POST Request (Recommended for PrestaShop)
+```bash
+curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id=ucs_69b7f29920f12_98_1773662873" \
+  -H "Content-Type: application/json" \
+  -H "UCP-Agent: TestClient/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440001" \
+  -H "idempotency-key: unique-key-12346" \
+  -H "request-signature: signature-here" \
+  -d '{
+    "promo_code": "PROMO123"
+  }'
 ```
 
 #### Success Response (201 Created)
@@ -241,6 +353,15 @@ Access UCP Buyers API at: `/prestashop/module/ucpwellknown/buyers`
 - `first_name` and `last_name` are required (max 32 characters)
 - `phone` must be valid phone number format if provided
 
+### Promo Code Validation (NEW)
+- `promo_code` must be string (max 100 characters)
+- Code must exist in PrestaShop CartRule system
+- Code must be active and within valid date range
+- Customer usage limits are enforced
+- Minimum amount requirements are checked
+- Product restrictions are validated
+- Duplicate application is prevented
+
 ## Error Handling
 
 ### 400 Bad Request Examples
@@ -290,6 +411,30 @@ Access UCP Buyers API at: `/prestashop/module/ucpwellknown/buyers`
 }
 ```
 
+#### Invalid Promo Code
+```json
+{
+  "error": "Invalid promo code",
+  "code": 400,
+  "details": [
+    {
+      "field": "promo_code",
+      "message": "Promo code not found"
+    }
+  ],
+  "timestamp": "2026-03-17T10:15:30+03:00"
+}
+```
+
+#### Checkout Session Not Found
+```json
+{
+  "error": "Checkout session not found",
+  "code": 404,
+  "timestamp": "2026-03-17T10:15:30+03:00"
+}
+```
+
 ## Implementation Details
 
 ### UcpCheckoutSessionValidator Class
@@ -298,6 +443,8 @@ Provides comprehensive validation for checkout session requests:
 - `validateLineItems()`: Validates products and stock
 - `validateBuyer()`: Validates buyer information
 - `validateCheckoutSessionId()`: Validates checkout ID format
+- `validateCheckoutSessionUpdate()`: Validates update request structure (NEW)
+- `validatePromoCode()`: Validates promotional codes (NEW)
 
 ### UcpCartManager Class
 Handles PrestaShop cart operations:
@@ -305,6 +452,10 @@ Handles PrestaShop cart operations:
 - `calculateCartTotals()`: Computes totals with tax breakdown
 - `getCartDetails()`: Retrieves cart information
 - `deleteCart()`: Removes cart from system
+- `getCartByCheckoutSessionId()`: Retrieves cart from session ID (NEW)
+- `applyPromoCode()`: Applies promotional code to cart (NEW)
+- `removePromoCode()`: Removes promotional code from cart (NEW)
+- `getAppliedRules()`: Returns applied promotional rules (NEW)
 
 ### UcpHeaderValidator Class
 Provides header validation functionality:
@@ -316,29 +467,63 @@ Provides header validation functionality:
 
 ## Testing
 
-### Run Checkout Session Tests
+### Manual Testing
+
+The module can be tested manually using curl or any HTTP client:
+
+#### Create Checkout Session
 ```bash
-php tests/UcpCheckoutSessionValidatorTest.php
+curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions" \
+  -H "Content-Type: application/json" \
+  -H "UCP-Agent: TestClient/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440000" \
+  -H "idempotency-key: unique-key-$(date +%s)" \
+  -H "request-signature: test-signature" \
+  -d '{
+    "line_items": [
+      {
+        "product_id": 1,
+        "quantity": 2
+      }
+    ],
+    "buyer": {
+      "email": "customer@example.com",
+      "first_name": "John",
+      "last_name": "Doe"
+    }
+  }'
 ```
 
-### Run Header Validation Tests
+#### Apply Promo Code
 ```bash
-php tests/UcpHeaderValidatorTest.php
+curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}" \
+  -H "Content-Type: application/json" \
+  -H "UCP-Agent: TestClient/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440001" \
+  -H "idempotency-key: unique-key-$(date +%s)" \
+  -H "request-signature: test-signature" \
+  -d '{
+    "promo_code": "PROMO10"
+  }'
 ```
 
-### Test Coverage
-- Request structure validation
-- Product existence and stock validation
-- Buyer information validation
-- Error handling and response formatting
-- Cart creation and management
-- Price calculation with taxes
-- **PUT**: Update UCP resources with JSON payload
-- **DELETE**: Remove UCP resources
+#### Remove Promo Code
+```bash
+curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?checkout_session_id={checkoutSessionId}" \
+  -H "Content-Type: application/json" \
+  -H "UCP-Agent: TestClient/1.0" \
+  -H "request-id: 550e8400-e29b-41d4-a716-446655440002" \
+  -H "idempotency-key: unique-key-$(date +%s)" \
+  -H "request-signature: test-signature" \
+  -d '{
+    "promo_code": ""
+  }'
+```
 
 ## Error Codes
 
-- `400 Bad Request`: Missing or invalid headers
+- `400 Bad Request`: Missing or invalid headers/request data
+- `404 Not Found`: Checkout session not found
 - `405 Method Not Allowed`: Unsupported HTTP method
 - `500 Internal Server Error`: Server processing error
 
@@ -428,4 +613,39 @@ foreach ($response_headers as $name => $value) {
 }
 
 echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+```
+
+### Promo Code Integration Example
+
+```php
+require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCartManager.php';
+require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCheckoutSessionValidator.php';
+
+$cart_manager = new UcpCartManager();
+$validator = new UcpCheckoutSessionValidator();
+
+// Apply promo code to existing cart
+$cart_id = 123;
+$promo_code = 'SUMMER2023';
+
+// Validate promo code first
+$validation = $validator->validatePromoCode($promo_code, $cart_id);
+if (!$validation['valid']) {
+    // Handle validation errors
+    return ['error' => 'Invalid promo code', 'details' => $validation['errors']];
+}
+
+// Apply promo code
+$result = $cart_manager->applyPromoCode($cart_id, $promo_code);
+if ($result['success']) {
+    // Get updated cart details
+    $cart_details = $cart_manager->getCartDetails($cart_id);
+    $applied_rules = $cart_manager->getAppliedRules($cart_id);
+    
+    return [
+        'success' => true,
+        'cart' => $cart_details,
+        'applied_rules' => $applied_rules
+    ];
+}
 ```

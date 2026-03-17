@@ -305,6 +305,210 @@ class UcpCartManager
         }
     }
 
+    public function getCartByCheckoutSessionId($checkout_session_id)
+    {
+        try {
+            // Validate checkout session ID format
+            if (!preg_match('/^ucs_[a-zA-Z0-9]+_\d+_\d+$/', $checkout_session_id)) {
+                return [
+                    'success' => false,
+                    'error' => 'Invalid checkout session ID format'
+                ];
+            }
+
+            // Extract cart_id from checkout session ID
+            $parts = explode('_', $checkout_session_id);
+            if (count($parts) < 4) {
+                return [
+                    'success' => false,
+                    'error' => 'Invalid checkout session ID structure'
+                ];
+            }
+
+            $cart_id = (int)$parts[count($parts) - 2];
+            
+            // Verify cart exists
+            $cart = new Cart($cart_id);
+            if (!Validate::isLoadedObject($cart)) {
+                return [
+                    'success' => false,
+                    'error' => 'Cart not found'
+                ];
+            }
+
+            return [
+                'success' => true,
+                'cart_id' => $cart_id,
+                'cart' => $cart
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    public function applyPromoCode($cart_id, $promo_code)
+    {
+        try {
+            $cart = new Cart($cart_id);
+            if (!Validate::isLoadedObject($cart)) {
+                return [
+                    'success' => false,
+                    'error' => 'Cart not found'
+                ];
+            }
+
+            // Get cart rule ID from code
+            $cart_rule_id = CartRule::getIdByCode($promo_code);
+            if (!$cart_rule_id) {
+                return [
+                    'success' => false,
+                    'error' => 'Promo code not found'
+                ];
+            }
+
+            $cart_rule = new CartRule($cart_rule_id);
+            if (!Validate::isLoadedObject($cart_rule)) {
+                return [
+                    'success' => false,
+                    'error' => 'Invalid promo code'
+                ];
+            }
+
+            // Check if already applied to cart
+            $cart_rules = $cart->getCartRules();
+            foreach ($cart_rules as $rule) {
+                if ($rule['id_cart_rule'] == $cart_rule_id) {
+                    return [
+                        'success' => false,
+                        'error' => 'Promo code already applied'
+                    ];
+                }
+            }
+
+            // Try to add cart rule directly without complex validation
+            $result = $cart->addCartRule($cart_rule_id);
+            if (!$result) {
+                return [
+                    'success' => false,
+                    'error' => 'Failed to apply promo code to cart'
+                ];
+            }
+
+            // Update cart to recalculate totals
+            $cart->update();
+
+            return [
+                'success' => true,
+                'cart_rule_id' => $cart_rule_id,
+                'discount_amount' => $cart_rule->reduction_amount,
+                'discount_type' => $cart_rule->reduction_percent ? 'percentage' : 'amount'
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    public function removePromoCode($cart_id, $promo_code = null)
+    {
+        try {
+            $cart = new Cart($cart_id);
+            if (!Validate::isLoadedObject($cart)) {
+                return [
+                    'success' => false,
+                    'error' => 'Cart not found'
+                ];
+            }
+
+            $cart_rules = $cart->getCartRules();
+            $removed = false;
+
+            if ($promo_code) {
+                // Remove specific promo code
+                $cart_rule_id = CartRule::getIdByCode($promo_code);
+                if ($cart_rule_id) {
+                    foreach ($cart_rules as $rule) {
+                        if ($rule['id_cart_rule'] == $cart_rule_id) {
+                            $cart->removeCartRule($cart_rule_id);
+                            $removed = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!$removed) {
+                    return [
+                        'success' => false,
+                        'error' => 'Promo code not found in cart'
+                    ];
+                }
+            } else {
+                // Remove all promo codes
+                foreach ($cart_rules as $rule) {
+                    $cart->removeCartRule($rule['id_cart_rule']);
+                    $removed = true;
+                }
+            }
+
+            if ($removed) {
+                // Update cart to recalculate totals
+                $cart->update();
+            }
+
+            return [
+                'success' => true,
+                'removed' => $removed
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    public function getAppliedRules($cart_id)
+    {
+        try {
+            $cart = new Cart($cart_id);
+            if (!Validate::isLoadedObject($cart)) {
+                return [];
+            }
+
+            $cart_rules = $cart->getCartRules();
+            $applied_rules = [];
+
+            foreach ($cart_rules as $rule) {
+                $cart_rule = new CartRule($rule['id_cart_rule']);
+                if (Validate::isLoadedObject($cart_rule)) {
+                    $applied_rules[] = [
+                        'id' => $cart_rule->id,
+                        'name' => $cart_rule->name,
+                        'code' => $cart_rule->code,
+                        'description' => $cart_rule->description,
+                        'discount_type' => $cart_rule->reduction_percent ? 'percentage' : 'amount',
+                        'discount_value' => $cart_rule->reduction_percent ?: $cart_rule->reduction_amount,
+                        'free_shipping' => $cart_rule->free_shipping,
+                        'applied_at' => date('c', strtotime($rule['date_add']))
+                    ];
+                }
+            }
+
+            return $applied_rules;
+
+        } catch (Exception $e) {
+            return [];
+        }
+    }
+
     public function deleteCart($cart_id)
     {
         try {

@@ -69,19 +69,42 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
     {
         $headers = $this->validator->getExtractedHeaders();
         
+        // Check if this is an update request via query parameter
+        $checkout_session_id = $_GET['checkout_session_id'] ?? null;
+        $is_update_request = !empty($checkout_session_id);
+        
+        if ($is_update_request && $method === 'POST') {
+            // Treat POST with checkout_session_id as PUT request
+            $method = 'PUT';
+        }
+        
         switch ($method) {
             case 'POST':
-                $input = $this->getJsonInput();
-                return $this->handlePostCheckoutSession($headers, $input, $log_data);
+                if ($is_update_request) {
+                    // Handle as PUT request
+                    $input = $this->getJsonInput();
+                    return $this->handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data);
+                } else {
+                    // Handle as POST request (create)
+                    $input = $this->getJsonInput();
+                    return $this->handlePostCheckoutSession($headers, $input, $log_data);
+                }
             
             case 'GET':
                 return $this->handleGetCheckoutSession($headers, $log_data);
+            
+            case 'PUT':
+                if (!$checkout_session_id) {
+                    $checkout_session_id = $this->getCheckoutSessionId();
+                }
+                $input = $this->getJsonInput();
+                return $this->handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data);
             
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [
                     'error' => 'Method not allowed',
-                    'allowed_methods' => ['GET', 'POST'],
+                    'allowed_methods' => ['GET', 'POST', 'PUT'],
                     'timestamp' => date('c')
                 ];
         }
@@ -208,9 +231,160 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
             ],
             'endpoints' => [
                 'POST /checkout-sessions' => 'Create a new checkout session',
-                'GET /checkout-sessions/{id}' => 'Retrieve checkout session details'
+                'GET /checkout-sessions/{id}' => 'Retrieve checkout session details',
+                'PUT /checkout-sessions/{id}' => 'Update checkout session (apply/remove promo codes)'
             ]
         ];
+    }
+
+    private function getCheckoutSessionId()
+    {
+        $request_uri = $_SERVER['REQUEST_URI'] ?? '';
+        $parsed_url = parse_url($request_uri);
+        $path = $parsed_url['path'] ?? '';
+        
+        // Extract checkout session ID from URL pattern: /checkout-sessions/{id}
+        $pattern = '/\/checkout-sessions\/([^\/]+)/';
+        if (preg_match($pattern, $path, $matches)) {
+            return $matches[1];
+        }
+        
+        return null;
+    }
+
+    private function handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data)
+    {
+        try {
+            // Validate checkout session ID
+            if (empty($checkout_session_id)) {
+                header('HTTP/1.1 400 Bad Request');
+                return [
+                    'error' => 'Missing checkout session ID',
+                    'code' => 400,
+                    'timestamp' => date('c')
+                ];
+            }
+
+            // Validate input structure
+            $validation_result = $this->session_validator->validateCheckoutSessionUpdate($input);
+            
+            if (!$validation_result['valid']) {
+                header('HTTP/1.1 400 Bad Request');
+                return [
+                    'error' => 'Invalid request data',
+                    'code' => 400,
+                    'details' => $validation_result['errors'],
+                    'timestamp' => date('c')
+                ];
+            }
+
+            // Get cart from checkout session ID
+            $cart_result = $this->cart_manager->getCartByCheckoutSessionId($checkout_session_id);
+            
+            if (!$cart_result['success']) {
+                header('HTTP/1.1 404 Not Found');
+                return [
+                    'error' => 'Checkout session not found',
+                    'code' => 404,
+                    'timestamp' => date('c')
+                ];
+            }
+
+            $cart_id = $cart_result['cart_id'];
+
+            // Handle promo code if provided
+            if (isset($input['promo_code'])) {
+                if (empty($input['promo_code'])) {
+                    // Remove existing promo code
+                    $remove_result = $this->cart_manager->removePromoCode($cart_id);
+                    if (!$remove_result['success']) {
+                        header('HTTP/1.1 500 Internal Server Error');
+                        return [
+                            'error' => 'Failed to remove promo code',
+                            'code' => 500,
+                            'message' => $remove_result['error'],
+                            'timestamp' => date('c')
+                        ];
+                    }
+                } else {
+                    // Validate and apply promo code
+                    $promo_validation = $this->session_validator->validatePromoCode($input['promo_code'], $cart_id);
+                    
+                    if (!$promo_validation['valid']) {
+                        header('HTTP/1.1 400 Bad Request');
+                        return [
+                            'error' => 'Invalid promo code',
+                            'code' => 400,
+                            'details' => $promo_validation['errors'],
+                            'timestamp' => date('c')
+                        ];
+                    }
+
+                    // Apply promo code to cart
+                    $apply_result = $this->cart_manager->applyPromoCode($cart_id, $input['promo_code']);
+                    
+                    if (!$apply_result['success']) {
+                        header('HTTP/1.1 500 Internal Server Error');
+                        return [
+                            'error' => 'Failed to apply promo code',
+                            'code' => 500,
+                            'message' => $apply_result['error'],
+                            'timestamp' => date('c')
+                        ];
+                    }
+                }
+            }
+
+            // Recalculate cart totals
+            $totals = $this->cart_manager->calculateCartTotals($cart_id);
+            
+            // Get updated cart details
+            $cart_details = $this->cart_manager->getCartDetails($cart_id);
+
+            // Log successful checkout session update
+            PrestaShopLogger::addLog(
+                'UCP Checkout Session Updated: ' . json_encode([
+                    'checkout_id' => $checkout_session_id,
+                    'cart_id' => $cart_id,
+                    'request_id' => $headers['request-id'],
+                    'promo_code' => $input['promo_code'] ?? null
+                ]),
+                1, // Info level
+                null,
+                'UcpWellKnown',
+                0,
+                true
+            );
+
+            return [
+                'status' => 'success',
+                'checkout_id' => $checkout_session_id,
+                'cart_id' => $cart_id,
+                'items' => $cart_details['products'],
+                'subtotal' => $totals['subtotal']['amount'],
+                'discount' => $totals['discount']['amount'],
+                'total' => $totals['total']['amount'],
+                'applied_rules' => $this->cart_manager->getAppliedRules($cart_id),
+                'totals' => $totals,
+                'updated_at' => date('c'),
+                'request_info' => [
+                    'request_id' => $headers['request-id'],
+                    'idempotency_key' => $headers['idempotency-key']
+                ]
+            ];
+
+        } catch (Exception $e) {
+            PrestaShopLogger::addLog(
+                'UCP Checkout Session Update Error: ' . $e->getMessage(),
+                3, // Error level
+                null,
+                'UcpWellKnown',
+                0,
+                true
+            );
+            
+            throw $e;
+        }
     }
 
     private function generateCheckoutId($cart_id)
