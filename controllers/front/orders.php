@@ -65,15 +65,15 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
     private function processRequest($method, $log_data)
     {
         $headers = $this->validator->getExtractedHeaders();
-        
+
         switch ($method) {
             case 'GET':
                 return $this->handleGet($headers, $log_data);
-            
+
             case 'POST':
                 $input = $this->getJsonInput();
                 return $this->handlePost($headers, $input, $log_data);
-            
+
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [
@@ -87,7 +87,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
     private function handleGet($headers, $log_data)
     {
         $input = $_GET;
-        
+
         // Handle different GET endpoints
         if (isset($input['cart_id'])) {
             return $this->getSingleCart($input['cart_id'], $headers, $log_data);
@@ -117,9 +117,9 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
         try {
             $cart_id = (int) $cart_id;
             $language_id = $this->getLanguageId($headers);
-            
+
             $cart = new Cart($cart_id);
-            
+
             if (!Validate::isLoadedObject($cart)) {
                 header('HTTP/1.1 404 Not Found');
                 return [
@@ -129,9 +129,9 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => date('c')
                 ];
             }
-            
+
             $ucp_order = $this->converter->convertCartToUcpOrder($cart, $language_id);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_order,
@@ -142,7 +142,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -161,7 +161,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
             $language_id = $this->getLanguageId($headers);
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
-            
+
             // Get customer carts
             $sql = new DbQuery();
             $sql->select('c.id_cart');
@@ -169,10 +169,10 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
             $sql->where('c.id_customer = ' . $customer_id);
             $sql->orderBy('c.date_add', 'DESC');
             $sql->limit($limit, $offset);
-            
+
             $carts = Db::getInstance()->executeS($sql);
             $cart_ids = array_column($carts, 'id_cart');
-            
+
             if (empty($cart_ids)) {
                 return [
                     'status' => 'success',
@@ -189,9 +189,9 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $ucp_orders = $this->converter->convertMultipleCarts($cart_ids, $language_id);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_orders,
@@ -207,7 +207,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -225,7 +225,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
             $language_id = $this->getLanguageId($headers);
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
-            
+
             // Get active carts (with products)
             $sql = new DbQuery();
             $sql->select('DISTINCT c.id_cart');
@@ -235,10 +235,10 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
             $sql->where('c.date_add > DATE_SUB(NOW(), INTERVAL 30 DAY)'); // Last 30 days
             $sql->orderBy('c.date_add', 'DESC');
             $sql->limit($limit, $offset);
-            
+
             $carts = Db::getInstance()->executeS($sql);
             $cart_ids = array_column($carts, 'id_cart');
-            
+
             if (empty($cart_ids)) {
                 return [
                     'status' => 'success',
@@ -254,9 +254,9 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $ucp_orders = $this->converter->convertMultipleCarts($cart_ids, $language_id);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_orders,
@@ -271,7 +271,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 500 Internal Server Error');
             return [
@@ -287,12 +287,12 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
     {
         try {
             $language_id = $this->getLanguageId($headers);
-            
+
             // Validate cart IDs
             $valid_cart_ids = array_filter($cart_ids, function($id) {
                 return is_numeric($id) && $id > 0;
             });
-            
+
             if (empty($valid_cart_ids)) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -302,9 +302,9 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => date('c')
                 ];
             }
-            
+
             $ucp_orders = $this->converter->convertMultipleCarts($valid_cart_ids, $language_id);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_orders,
@@ -318,7 +318,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -340,7 +340,7 @@ class UcpWellKnownOrdersModuleFrontController extends ModuleFrontController
                 return (int) $language_id;
             }
         }
-        
+
         // Fall back to default language
         return (int) Configuration::get('PS_LANG_DEFAULT');
     }

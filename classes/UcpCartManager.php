@@ -13,7 +13,7 @@ class UcpCartManager
         $this->context = Context::getContext();
     }
 
-    public function createCartWithItems($validated_items, $buyer)
+    public function createCartWithItems($validated_items, $buyer, $customer_id = 0)
     {
         try {
             // Create new cart
@@ -22,11 +22,15 @@ class UcpCartManager
             $cart->id_shop = $this->context->shop->id;
             $cart->id_lang = $this->context->language->id;
             $cart->id_currency = $this->context->currency->id;
-            $cart->id_customer = 0; // Guest cart
-            
-            // Set cart as guest cart
-            $cart->id_guest = $this->createOrGetGuest($buyer['email']);
-            
+
+            // Set customer ID (0 for guest, customer ID for logged in)
+            $cart->id_customer = (int)$customer_id;
+
+            // Set cart as guest cart only if no customer ID
+            if ($customer_id == 0) {
+                $cart->id_guest = $this->createOrGetGuest($buyer['email']);
+            }
+
             if (!$cart->add()) {
                 return [
                     'success' => false,
@@ -71,7 +75,7 @@ class UcpCartManager
             $product_id = $item['product_id'];
             $quantity = $item['quantity'];
             $product_attribute_id = 0; // Default product combination
-            
+
             // Check if product has combinations
             $product = new Product($product_id);
             if ($product->hasAttributes()) {
@@ -128,7 +132,7 @@ class UcpCartManager
             $customization->id_cart = $cart->id;
             $customization->quantity = 1;
             $customization->in_cart = true;
-            
+
             if (!$customization->add()) {
                 throw new Exception('Failed to create customization');
             }
@@ -143,7 +147,7 @@ class UcpCartManager
                         $customization_field->type = (isset($field['type']) ? $field['type'] : 0); // 0 = text field
                         $customization_field->required = (isset($field['required']) ? $field['required'] : 0);
                         $customization_field->is_module = 0;
-                        
+
                         if ($customization_field->add()) {
                             // Add customization value
                             $customization_value = new CustomizationValue();
@@ -174,7 +178,7 @@ class UcpCartManager
         // Create new guest (simplified approach)
         $guest = new Guest();
         $guest->email = $email;
-        
+
         if ($guest->add()) {
             return $guest->id;
         }
@@ -192,7 +196,7 @@ class UcpCartManager
 
             // Get cart products
             $products = $cart->getProducts();
-            
+
             $subtotal = 0;
             $total_tax = 0;
             $total_shipping = 0;
@@ -209,10 +213,10 @@ class UcpCartManager
 
             // Get shipping costs
             $total_shipping = $cart->getTotalShippingCost();
-            
+
             // Get discounts
             $total_discount = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-            
+
             // Calculate final total
             $total = $cart->getOrderTotal(true);
 
@@ -326,7 +330,7 @@ class UcpCartManager
             }
 
             $cart_id = (int)$parts[count($parts) - 2];
-            
+
             // Verify cart exists
             $cart = new Cart($cart_id);
             if (!Validate::isLoadedObject($cart)) {

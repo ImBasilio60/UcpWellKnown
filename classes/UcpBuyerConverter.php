@@ -36,7 +36,7 @@ class UcpBuyerConverter
             'name' => [
                 'first' => $options['anonymize'] ? $this->anonymizeString($customer->firstname) : $customer->firstname,
                 'last' => $options['anonymize'] ? $this->anonymizeString($customer->lastname) : $customer->lastname,
-                'full' => $options['anonymize'] 
+                'full' => $options['anonymize']
                     ? $this->anonymizeString($customer->firstname) . ' ' . $this->anonymizeString($customer->lastname)
                     : $customer->firstname . ' ' . $customer->lastname
             ],
@@ -102,7 +102,7 @@ class UcpBuyerConverter
     public function convertMultipleCustomers($customer_ids, $options = [])
     {
         $buyers = [];
-        
+
         foreach ($customer_ids as $customer_id) {
             try {
                 $customer = new Customer($customer_id);
@@ -114,7 +114,7 @@ class UcpBuyerConverter
                 continue;
             }
         }
-        
+
         return $buyers;
     }
 
@@ -131,19 +131,19 @@ class UcpBuyerConverter
         try {
             // Get default billing address
             $billing_address_id = (int) Address::getFirstCustomerAddressId($customer_id);
-            
+
             if (!$billing_address_id) {
                 return null;
             }
 
             $address = new Address($billing_address_id);
-            
+
             if (!Validate::isLoadedObject($address)) {
                 return null;
             }
 
             return $this->formatAddress($address, $language_id, $anonymize);
-            
+
         } catch (Exception $e) {
             return null;
         }
@@ -167,9 +167,9 @@ class UcpBuyerConverter
             $sql->where('a.id_customer = ' . (int) $customer_id);
             $sql->where('a.deleted = 0');
             $sql->orderBy('a.date_add', 'DESC');
-            
+
             $address_results = Db::getInstance()->executeS($sql);
-            
+
             if (empty($address_results)) {
                 return null;
             }
@@ -177,7 +177,7 @@ class UcpBuyerConverter
             // Look for shipping address (address that's not billing)
             $billing_address_id = (int) Address::getFirstCustomerAddressId($customer_id);
             $shipping_address = null;
-            
+
             foreach ($address_results as $address_data) {
                 if ($address_data['id_address'] != $billing_address_id) {
                     $shipping_address = new Address($address_data['id_address']);
@@ -197,7 +197,7 @@ class UcpBuyerConverter
             }
 
             return $this->formatAddress($shipping_address, $language_id, $anonymize);
-            
+
         } catch (Exception $e) {
             return null;
         }
@@ -261,7 +261,7 @@ class UcpBuyerConverter
         $length = strlen($string);
         $visible_chars = min(3, $length);
         $masked_chars = $length - $visible_chars;
-        
+
         return substr($string, 0, $visible_chars) . str_repeat('*', $masked_chars);
     }
 
@@ -280,9 +280,9 @@ class UcpBuyerConverter
         list($local, $domain) = explode('@', $email, 2);
         $local_length = strlen($local);
         $visible_chars = min(2, $local_length);
-        
+
         $anonymized_local = substr($local, 0, $visible_chars) . str_repeat('*', $local_length - $visible_chars);
-        
+
         return $anonymized_local . '@' . $domain;
     }
 

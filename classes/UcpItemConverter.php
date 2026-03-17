@@ -17,7 +17,7 @@ class UcpItemConverter
 
     /**
      * Convert a PrestaShop product to UCP Item format
-     * 
+     *
      * @param int $product_id PrestaShop product ID
      * @param int $language_id Language ID (optional, uses default if not provided)
      * @param bool $include_combinations Whether to include combinations as separate items
@@ -26,20 +26,20 @@ class UcpItemConverter
     public function convertProductToUcpItem($product_id, $language_id = null, $include_combinations = true)
     {
         $language_id = $language_id ?: $this->default_language_id;
-        
+
         // Load product data
         $product = new Product($product_id, false, $language_id);
-        
+
         if (!Validate::isLoadedObject($product)) {
             throw new Exception("Product with ID $product_id not found");
         }
 
         // Get product images
         $images = $this->getProductImages($product_id, $language_id);
-        
+
         // Get currency information
         $currency = $this->context->currency;
-        
+
         // Build base UCP Item
         $ucp_item = [
             'id' => (string) $product_id,
@@ -70,11 +70,11 @@ class UcpItemConverter
         // Handle combinations if requested and product has them
         if ($include_combinations && $product->hasAttributes()) {
             $combinations = $this->getProductCombinations($product_id, $language_id, $currency);
-            
+
             if (!empty($combinations)) {
                 // Option 1: Return as separate items (uncomment if preferred)
                 // return array_merge([$ucp_item], $combinations);
-                
+
                 // Option 2: Embed combinations in the main item
                 $ucp_item['variants'] = $combinations;
                 $ucp_item['has_variants'] = true;
@@ -91,7 +91,7 @@ class UcpItemConverter
     {
         $images = [];
         $product_images = Image::getImages($language_id, $product_id);
-        
+
         foreach ($product_images as $image) {
             $image_obj = new Image($image['id_image']);
             if (Validate::isLoadedObject($image_obj)) {
@@ -105,7 +105,7 @@ class UcpItemConverter
                 ];
             }
         }
-        
+
         return $images;
     }
 
@@ -116,11 +116,11 @@ class UcpItemConverter
     {
         $combinations = [];
         $product = new Product($product_id);
-        
+
         // Get all combinations
         $combination_ids = $product->getAttributeCombinations($language_id);
         $grouped_combinations = [];
-        
+
         // Group by combination ID
         foreach ($combination_ids as $combination) {
             $id_combination = $combination['id_product_attribute'];
@@ -129,11 +129,11 @@ class UcpItemConverter
             }
             $grouped_combinations[$id_combination][] = $combination;
         }
-        
+
         // Convert each combination to UCP variant
         foreach ($grouped_combinations as $id_combination => $attributes) {
             $combination_obj = new Combination($id_combination);
-            
+
             if (Validate::isLoadedObject($combination_obj)) {
                 $variant = [
                     'id' => (string) $id_combination,
@@ -153,11 +153,11 @@ class UcpItemConverter
                         'minimal_quantity' => $combination_obj->minimal_quantity
                     ]
                 ];
-                
+
                 $combinations[] = $variant;
             }
         }
-        
+
         return $combinations;
     }
 
@@ -168,7 +168,7 @@ class UcpItemConverter
     {
         // Simple and reliable price formatting
         $formatted_price = number_format($price, 2, '.', ',') . ' ' . $currency->iso_code;
-        
+
         return [
             'amount' => (float) $price,
             'currency' => $currency->iso_code,
@@ -207,7 +207,7 @@ class UcpItemConverter
     private function getCombinationAvailability($id_combination)
     {
         $stock = StockAvailable::getQuantityAvailableByProduct(null, $id_combination);
-        
+
         if ($stock > 0) {
             return [
                 'status' => 'in_stock',
@@ -256,20 +256,20 @@ class UcpItemConverter
     private function getCombinationImages($product_id, $id_combination, $language_id)
     {
         $images = [];
-        
+
         // In PrestaShop, images are not directly linked to combinations
         // We'll return the main product images, but you could customize this
         // to return specific images if your setup uses a different approach
-        
+
         // Get all product images (combinations typically use the same images as the main product)
         $sql = new DbQuery();
         $sql->select('id_image');
         $sql->from('image');
         $sql->where('id_product = ' . (int)$product_id);
         $sql->orderBy('position', 'ASC');
-        
+
         $product_images = Db::getInstance()->executeS($sql);
-        
+
         foreach ($product_images as $image_row) {
             $image_obj = new Image($image_row['id_image']);
             if (Validate::isLoadedObject($image_obj)) {
@@ -281,7 +281,7 @@ class UcpItemConverter
                 ];
             }
         }
-        
+
         return $images;
     }
 
@@ -295,7 +295,7 @@ class UcpItemConverter
             'used' => 'Used',
             'refurbished' => 'Refurbished'
         ];
-        
+
         return $conditions[$condition] ?? 'Unknown';
     }
 
@@ -306,7 +306,7 @@ class UcpItemConverter
     {
         $categories = [];
         $product_categories = Product::getProductCategories($product_id);
-        
+
         foreach ($product_categories as $category_id) {
             $category = new Category($category_id, $language_id);
             if (Validate::isLoadedObject($category)) {
@@ -318,7 +318,7 @@ class UcpItemConverter
                 ];
             }
         }
-        
+
         return $categories;
     }
 
@@ -329,13 +329,13 @@ class UcpItemConverter
     {
         $tags = [];
         $product_tags = Tag::getProductTags($product_id);
-        
+
         if (isset($product_tags[$language_id])) {
             foreach ($product_tags[$language_id] as $tag) {
                 $tags[] = $tag;
             }
         }
-        
+
         return $tags;
     }
 
@@ -347,16 +347,16 @@ class UcpItemConverter
         if (!$manufacturer_id) {
             return null;
         }
-        
+
         $manufacturer = new Manufacturer($manufacturer_id, $this->default_language_id);
-        
+
         if (Validate::isLoadedObject($manufacturer)) {
             return [
                 'id' => (string) $manufacturer_id,
                 'name' => $manufacturer->name
             ];
         }
-        
+
         return null;
     }
 
@@ -366,7 +366,7 @@ class UcpItemConverter
     public function convertMultipleProducts($product_ids, $language_id = null, $include_combinations = true)
     {
         $ucp_items = [];
-        
+
         foreach ($product_ids as $product_id) {
             try {
                 $ucp_items[] = $this->convertProductToUcpItem($product_id, $language_id, $include_combinations);
@@ -382,7 +382,7 @@ class UcpItemConverter
                 );
             }
         }
-        
+
         return $ucp_items;
     }
 }

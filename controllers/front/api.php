@@ -62,22 +62,22 @@ class UcpWellKnownApiModuleFrontController extends ModuleFrontController
     private function processRequest($method, $log_data)
     {
         $headers = $this->validator->getExtractedHeaders();
-        
+
         switch ($method) {
             case 'GET':
                 return $this->handleGet($headers, $log_data);
-            
+
             case 'POST':
                 $input = $this->getJsonInput();
                 return $this->handlePost($headers, $input, $log_data);
-            
+
             case 'PUT':
                 $input = $this->getJsonInput();
                 return $this->handlePut($headers, $input, $log_data);
-            
+
             case 'DELETE':
                 return $this->handleDelete($headers, $log_data);
-            
+
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [

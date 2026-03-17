@@ -6,6 +6,7 @@ This PrestaShop module implements the UCP (Universal Commerce Protocol) for hand
 
 - **Header Validation**: Validates UCP-specific HTTP headers with proper format checking
 - **Checkout Sessions**: Create temporary shopping carts with validation and error handling
+- **Buyer Identity Management**: Automatic customer creation/retrieval with comprehensive validation
 - **Promo Code Management**: Apply and remove promotional codes with comprehensive validation
 - **Product Validation**: Check product existence, stock availability, and pricing
 - **Cart Management**: Create and manage PrestaShop carts with guest support
@@ -37,6 +38,7 @@ ucpwellknown/
 │   ├── UcpHeaderValidator.php
 │   ├── UcpCheckoutSessionValidator.php
 │   ├── UcpCartManager.php
+│   ├── UcpBuyerManager.php
 │   ├── UcpBuyerConverter.php
 │   ├── UcpItemConverter.php
 │   └── UcpOrderConverter.php
@@ -119,6 +121,93 @@ Updates an existing checkout session to apply or remove promotional codes.
     "city": "Paris",
     "postal_code": "75001",
     "country": "France"
+  }
+}
+```
+
+**Required Buyer Fields:**
+- `email`: Customer email address (must be valid format)
+- `first_name`: Customer first name
+- `last_name`: Customer last name  
+- `address`: Street address (required for shipping)
+- `city`: City name (required for shipping)
+- `postal_code`: Postal code (4-10 digits, required for shipping)
+- `country`: Country code (ISO format, required for shipping)
+
+**Optional Buyer Fields:**
+- `phone`: Phone number (minimum 10 digits)
+- `company`: Company name
+
+#### Success Response (POST - Checkout Session Created)
+```json
+{
+  "status": "success",
+  "checkout_id": "ucs_69b90f2e80dff_130_1773735726",
+  "cart_id": "130",
+  "customer_id": "13",
+  "customer_info": {
+    "id": "13",
+    "email": "customer@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "is_new_customer": true
+  },
+  "line_items": [
+    {
+      "product_id": 1,
+      "quantity": 2,
+      "unit_price": 19.12,
+      "total_price": 38.24,
+      "product_name": "T-shirt imprimé colibri",
+      "product_reference": "demo_1",
+      "available_stock": 2400
+    }
+  ],
+  "buyer": {
+    "email": "customer@example.com",
+    "first_name": "John",
+    "last_name": "Doe",
+    "phone": "+33612345678",
+    "company": "ACME Corp",
+    "address": "123 Main St",
+    "city": "Paris",
+    "postal_code": "75001",
+    "country": "France"
+  },
+  "totals": {
+    "subtotal": {
+      "amount": 67,
+      "currency": "MGA",
+      "formatted": "67,00 MGA"
+    },
+    "tax": {
+      "amount": 14,
+      "currency": "MGA",
+      "formatted": "14,00 MGA"
+    },
+    "shipping": {
+      "amount": 0,
+      "currency": "MGA",
+      "formatted": "0,00 MGA"
+    },
+    "discount": {
+      "amount": 0,
+      "currency": "MGA",
+      "formatted": "0,00 MGA"
+    },
+    "total": {
+      "amount": 81,
+      "currency": "MGA",
+      "formatted": "81,00 MGA"
+    },
+    "items_count": 2,
+    "items_quantity": 3
+  },
+  "created_at": "2026-03-17T11:22:06+03:00",
+  "expires_at": "2026-03-17T12:22:06+03:00",
+  "request_info": {
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
+    "idempotency_key": "test-integration-1773735726"
   }
 }
 ```
@@ -457,13 +546,19 @@ Handles PrestaShop cart operations:
 - `removePromoCode()`: Removes promotional code from cart (NEW)
 - `getAppliedRules()`: Returns applied promotional rules (NEW)
 
-### UcpHeaderValidator Class
-Provides header validation functionality:
-- `extractHeaders()`: Extracts and normalizes HTTP headers
-- `validateHeaders()`: Validates header presence and format
-- `logRequest()`: Logs request information
-- `prepareResponseHeaders()`: Prepares response headers
-- `sendErrorResponse()`: Sends standardized error responses
+### UcpBuyerManager Class
+Handles buyer identity management and customer operations:
+- `handleBuyerIdentity()`: Main method for buyer validation and customer management
+- `validateBuyerPayload()`: Validates buyer information structure and required fields
+- `validateUcpAuthentication()`: Validates UCP headers for authentication
+- `validateIdempotency()`: Validates idempotency key requirements
+- `normalizeBuyerData()`: Normalizes and cleans buyer data
+- `getOrCreateCustomer()`: Retrieves existing customer or creates new one
+- `findCustomerByEmail()`: Searches for customer by email address
+- `validateCustomerReuse()`: Validates if existing customer can be reused
+- `updateCustomerSafely()`: Updates customer information safely
+- `createNewCustomer()`: Creates new customer with address
+- `createCustomerAddress()`: Creates customer address if provided
 
 ## Testing
 
@@ -471,7 +566,7 @@ Provides header validation functionality:
 
 The module can be tested manually using curl or any HTTP client:
 
-#### Create Checkout Session
+#### Create Checkout Session with Buyer Management
 ```bash
 curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions" \
   -H "Content-Type: application/json" \
@@ -489,10 +584,18 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions"
     "buyer": {
       "email": "customer@example.com",
       "first_name": "John",
-      "last_name": "Doe"
+      "last_name": "Doe",
+      "phone": "+33612345678",
+      "company": "ACME Corp",
+      "address": "123 Main St",
+      "city": "Paris",
+      "postal_code": "75001",
+      "country": "France"
     }
   }'
 ```
+
+**Note:** All buyer fields (email, first_name, last_name, address, city, postal_code, country) are now required. Missing fields will result in a 400 Bad Request error.
 
 #### Apply Promo Code
 ```bash
@@ -522,9 +625,11 @@ curl -X POST "http://localhost/prestashop/module/ucpwellknown/checkout_sessions?
 
 ## Error Codes
 
-- `400 Bad Request`: Missing or invalid headers/request data
+- `400 Bad Request`: Missing or invalid headers/request data, buyer information required
+- `401 Unauthorized`: Invalid or missing authentication headers
 - `404 Not Found`: Checkout session not found
 - `405 Method Not Allowed`: Unsupported HTTP method
+- `409 Conflict`: Idempotency key validation failed
 - `500 Internal Server Error`: Server processing error
 
 ## Security Considerations

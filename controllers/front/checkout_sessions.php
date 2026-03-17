@@ -3,6 +3,7 @@
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpHeaderValidator.php';
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCheckoutSessionValidator.php';
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCartManager.php';
+require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpBuyerManager.php';
 
 class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontController
 {
@@ -12,6 +13,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
     private $validator;
     private $session_validator;
     private $cart_manager;
+    private $buyer_manager;
 
     public function __construct()
     {
@@ -19,6 +21,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         $this->validator = new UcpHeaderValidator();
         $this->session_validator = new UcpCheckoutSessionValidator();
         $this->cart_manager = new UcpCartManager();
+        $this->buyer_manager = new UcpBuyerManager();
     }
 
     public function initContent()
@@ -68,16 +71,16 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
     private function processRequest($method, $log_data)
     {
         $headers = $this->validator->getExtractedHeaders();
-        
+
         // Check if this is an update request via query parameter
         $checkout_session_id = $_GET['checkout_session_id'] ?? null;
         $is_update_request = !empty($checkout_session_id);
-        
+
         if ($is_update_request && $method === 'POST') {
             // Treat POST with checkout_session_id as PUT request
             $method = 'PUT';
         }
-        
+
         switch ($method) {
             case 'POST':
                 if ($is_update_request) {
@@ -89,17 +92,17 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                     $input = $this->getJsonInput();
                     return $this->handlePostCheckoutSession($headers, $input, $log_data);
                 }
-            
+
             case 'GET':
                 return $this->handleGetCheckoutSession($headers, $log_data);
-            
+
             case 'PUT':
                 if (!$checkout_session_id) {
                     $checkout_session_id = $this->getCheckoutSessionId();
                 }
                 $input = $this->getJsonInput();
                 return $this->handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data);
-            
+
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [
@@ -115,7 +118,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         try {
             // Validate input structure
             $validation_result = $this->session_validator->validateCheckoutSessionRequest($input);
-            
+
             if (!$validation_result['valid']) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -126,9 +129,22 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 ];
             }
 
+            // Gérer l'identité du buyer avec toutes les validations
+            $buyer_result = $this->buyer_manager->handleBuyerIdentity($input['buyer'], $headers);
+
+            if (!$buyer_result['success']) {
+                header('HTTP/1.1 ' . $buyer_result['code']);
+                return [
+                    'error' => $buyer_result['error'],
+                    'code' => $buyer_result['code'],
+                    'details' => $buyer_result['details'] ?? [],
+                    'timestamp' => date('c')
+                ];
+            }
+
             // Process line items and validate products
             $validated_items = $this->session_validator->validateLineItems($input['line_items']);
-            
+
             if (!$validated_items['valid']) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -139,23 +155,11 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 ];
             }
 
-            // Validate buyer information
-            $buyer_validation = $this->session_validator->validateBuyer($input['buyer']);
-            
-            if (!$buyer_validation['valid']) {
-                header('HTTP/1.1 400 Bad Request');
-                return [
-                    'error' => 'Invalid buyer information',
-                    'code' => 400,
-                    'details' => $buyer_validation['errors'],
-                    'timestamp' => date('c')
-                ];
-            }
-
-            // Create cart and add products
+            // Create cart and add products avec le customer_id
             $cart_result = $this->cart_manager->createCartWithItems(
                 $validated_items['items'],
-                $input['buyer']
+                $input['buyer'],
+                $buyer_result['customer_id']
             );
 
             if (!$cart_result['success']) {
@@ -179,8 +183,10 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 'UCP Checkout Session Created: ' . json_encode([
                     'checkout_id' => $checkout_id,
                     'cart_id' => $cart_result['cart_id'],
+                    'customer_id' => $buyer_result['customer_id'],
                     'request_id' => $headers['request-id'],
-                    'items_count' => count($validated_items['items'])
+                    'items_count' => count($validated_items['items']),
+                    'is_new_customer' => $buyer_result['is_new_customer']
                 ]),
                 1, // Info level
                 null,
@@ -193,6 +199,14 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 'status' => 'success',
                 'checkout_id' => $checkout_id,
                 'cart_id' => $cart_result['cart_id'],
+                'customer_id' => $buyer_result['customer_id'],
+                'customer_info' => [
+                    'id' => $buyer_result['customer_data']['id'],
+                    'email' => $buyer_result['customer_data']['email'],
+                    'first_name' => $buyer_result['customer_data']['first_name'],
+                    'last_name' => $buyer_result['customer_data']['last_name'],
+                    'is_new_customer' => $buyer_result['is_new_customer']
+                ],
                 'line_items' => $validated_items['items'],
                 'buyer' => $input['buyer'],
                 'totals' => $totals,
@@ -213,7 +227,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 0,
                 true
             );
-            
+
             throw $e;
         }
     }
@@ -242,13 +256,13 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         $request_uri = $_SERVER['REQUEST_URI'] ?? '';
         $parsed_url = parse_url($request_uri);
         $path = $parsed_url['path'] ?? '';
-        
+
         // Extract checkout session ID from URL pattern: /checkout-sessions/{id}
         $pattern = '/\/checkout-sessions\/([^\/]+)/';
         if (preg_match($pattern, $path, $matches)) {
             return $matches[1];
         }
-        
+
         return null;
     }
 
@@ -267,7 +281,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
             // Validate input structure
             $validation_result = $this->session_validator->validateCheckoutSessionUpdate($input);
-            
+
             if (!$validation_result['valid']) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -280,7 +294,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
             // Get cart from checkout session ID
             $cart_result = $this->cart_manager->getCartByCheckoutSessionId($checkout_session_id);
-            
+
             if (!$cart_result['success']) {
                 header('HTTP/1.1 404 Not Found');
                 return [
@@ -309,7 +323,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 } else {
                     // Validate and apply promo code
                     $promo_validation = $this->session_validator->validatePromoCode($input['promo_code'], $cart_id);
-                    
+
                     if (!$promo_validation['valid']) {
                         header('HTTP/1.1 400 Bad Request');
                         return [
@@ -322,7 +336,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
                     // Apply promo code to cart
                     $apply_result = $this->cart_manager->applyPromoCode($cart_id, $input['promo_code']);
-                    
+
                     if (!$apply_result['success']) {
                         header('HTTP/1.1 500 Internal Server Error');
                         return [
@@ -337,7 +351,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
             // Recalculate cart totals
             $totals = $this->cart_manager->calculateCartTotals($cart_id);
-            
+
             // Get updated cart details
             $cart_details = $this->cart_manager->getCartDetails($cart_id);
 
@@ -382,7 +396,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 0,
                 true
             );
-            
+
             throw $e;
         }
     }

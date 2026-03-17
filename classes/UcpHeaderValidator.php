@@ -8,7 +8,7 @@ class UcpHeaderValidator
 {
     private $required_headers = [
         'UCP-Agent',
-        'request-id', 
+        'request-id',
         'idempotency-key',
         'request-signature'
     ];
@@ -18,10 +18,10 @@ class UcpHeaderValidator
     public function extractHeaders()
     {
         $headers = [];
-        
+
         // Get all HTTP headers (case-insensitive)
         $all_headers = getallheaders();
-        
+
         if ($all_headers === false) {
             $all_headers = [];
         }
@@ -106,7 +106,7 @@ class UcpHeaderValidator
     public function logRequest($endpoint)
     {
         $headers = $this->extracted_headers;
-        
+
         $log_data = [
             'timestamp' => date('c'),
             'request_id' => $headers['request-id'] ?? 'unknown',
@@ -131,7 +131,7 @@ class UcpHeaderValidator
     public function prepareResponseHeaders()
     {
         $headers = [];
-        
+
         // Echo back request-id if available
         if (isset($this->extracted_headers['request-id'])) {
             $headers['request-id'] = $this->extracted_headers['request-id'];

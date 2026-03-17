@@ -17,7 +17,7 @@ class UcpOrderConverter
 
     /**
      * Convert a PrestaShop Cart to UCP Order format
-     * 
+     *
      * @param Cart $cart PrestaShop cart object
      * @param int $language_id Language ID (optional, uses default if not provided)
      * @return array UCP Order structure
@@ -25,14 +25,14 @@ class UcpOrderConverter
     public function convertCartToUcpOrder($cart, $language_id = null)
     {
         $language_id = $language_id ?: $this->default_language_id;
-        
+
         if (!Validate::isLoadedObject($cart)) {
             throw new Exception("Invalid cart object provided");
         }
 
         // Get currency
         $currency = new Currency($cart->id_currency);
-        
+
         // Build UCP Order structure
         $ucp_order = [
             'id' => (string) $cart->id,
@@ -77,7 +77,7 @@ class UcpOrderConverter
     private function getCustomerInfo($cart, $language_id)
     {
         $customer = new Customer($cart->id_customer);
-        
+
         if (!Validate::isLoadedObject($customer)) {
             return null;
         }
@@ -103,20 +103,20 @@ class UcpOrderConverter
     {
         $lines = [];
         $products = $cart->getProducts();
-        
+
         foreach ($products as $product) {
             // Get product details
             $product_obj = new Product($product['id_product'], false, $language_id);
-            
+
             // Calculate taxes for this line
             $tax_calculator = $product_obj->getTaxesRate(new Address($cart->id_address_delivery));
             $tax_rate = (float) $tax_calculator;
-            
+
             $unit_price_tax_excl = (float) $product['price'];
             $unit_price_tax_incl = (float) $product['price_wt'];
             $total_price_tax_excl = (float) $product['total'];
             $total_price_tax_incl = (float) $product['total_wt'];
-            
+
             $line = [
                 'item_id' => (string) $product['id_product'],
                 'variant_id' => isset($product['id_product_attribute']) ? (string) $product['id_product_attribute'] : null,
@@ -174,7 +174,7 @@ class UcpOrderConverter
     private function getVariantInfo($combination, $language_id)
     {
         $attributes = $combination->getAttributesName($language_id);
-        
+
         return [
             'id' => (string) $combination->id,
             'reference' => $combination->reference ?: '',
@@ -198,14 +198,14 @@ class UcpOrderConverter
     private function getShippingInfo($cart, $language_id)
     {
         $shipping = [];
-        
+
         // Get shipping costs
         $total_shipping_tax_incl = $cart->getTotalShippingCost();
         $total_shipping_tax_excl = $cart->getTotalShippingCost(null, false);
-        
+
         if ($total_shipping_tax_incl > 0) {
             $carrier = new Carrier($cart->id_carrier);
-            
+
             $shipping = [
                 'method' => Validate::isLoadedObject($carrier) ? $carrier->name : 'Standard Shipping',
                 'cost' => [
@@ -238,7 +238,7 @@ class UcpOrderConverter
         }
 
         $address = new Address($cart->id_address_delivery);
-        
+
         if (!Validate::isLoadedObject($address)) {
             return null;
         }
@@ -269,7 +269,7 @@ class UcpOrderConverter
     {
         $discounts = [];
         $cart_rules = $cart->getCartRules();
-        
+
         foreach ($cart_rules as $cart_rule) {
             $discounts[] = [
                 'id' => (string) $cart_rule['id_cart_rule'],
@@ -305,11 +305,11 @@ class UcpOrderConverter
         $total_wrapping_tax_excl = $cart->getOrderTotal(false, Cart::ONLY_WRAPPING);
         $total_wrapping_tax_incl = $cart->getOrderTotal(true, Cart::ONLY_WRAPPING);
         $total_discounts = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
-        
+
         $total_tax_excl = $total_products_tax_excl + $total_shipping_tax_excl + $total_wrapping_tax_excl;
         $total_tax_incl = $total_products_tax_incl + $total_shipping_tax_incl + $total_wrapping_tax_incl;
         $total_taxes = $total_tax_incl - $total_tax_excl;
-        
+
         $grand_total = $total_tax_incl - $total_discounts;
 
         return [
@@ -353,7 +353,7 @@ class UcpOrderConverter
     public function convertMultipleCarts($cart_ids, $language_id = null)
     {
         $ucp_orders = [];
-        
+
         foreach ($cart_ids as $cart_id) {
             try {
                 $cart = new Cart($cart_id);
@@ -372,7 +372,7 @@ class UcpOrderConverter
                 );
             }
         }
-        
+
         return $ucp_orders;
     }
 }

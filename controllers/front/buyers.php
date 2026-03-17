@@ -65,15 +65,15 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
     private function processRequest($method, $log_data)
     {
         $headers = $this->validator->getExtractedHeaders();
-        
+
         switch ($method) {
             case 'GET':
                 return $this->handleGet($headers, $log_data);
-            
+
             case 'POST':
                 $input = $this->getJsonInput();
                 return $this->handlePost($headers, $input, $log_data);
-            
+
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [
@@ -87,7 +87,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
     private function handleGet($headers, $log_data)
     {
         $input = $_GET;
-        
+
         // Handle different GET endpoints
         if (isset($input['customer_id'])) {
             return $this->getSingleCustomer($input['customer_id'], $headers, $log_data);
@@ -118,16 +118,16 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
             $customer_id = (int) $customer_id;
             $language_id = $this->getLanguageId($headers);
             $anonymize = isset($_GET['anonymize']) && $_GET['anonymize'] === 'true';
-            
+
             $options = [
                 'language_id' => $language_id,
                 'anonymize' => $anonymize,
                 'include_billing_address' => isset($_GET['include_billing']) && $_GET['include_billing'] !== 'false',
                 'include_shipping_address' => isset($_GET['include_shipping']) && $_GET['include_shipping'] !== 'false'
             ];
-            
+
             $buyer = $this->converter->getCustomerById($customer_id, $options);
-            
+
             if (!$buyer) {
                 header('HTTP/1.1 404 Not Found');
                 return [
@@ -137,7 +137,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => date('c')
                 ];
             }
-            
+
             return [
                 'status' => 'success',
                 'data' => $buyer,
@@ -149,7 +149,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -168,7 +168,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
             $anonymize = isset($_GET['anonymize']) && $_GET['anonymize'] === 'true';
-            
+
             // Get all active customers
             $sql = new DbQuery();
             $sql->select('c.id_customer');
@@ -176,19 +176,19 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
             $sql->where('c.active = 1');
             $sql->orderBy('c.date_add', 'DESC');
             $sql->limit($limit, $offset);
-            
+
             $customers = Db::getInstance()->executeS($sql);
             $customer_ids = array_column($customers, 'id_customer');
-            
+
             // Get total count for pagination
             $count_sql = new DbQuery();
             $count_sql->select('COUNT(DISTINCT c.id_customer) as total');
             $count_sql->from('customer', 'c');
             $count_sql->where('c.active = 1');
-            
+
             $total_result = Db::getInstance()->getRow($count_sql);
             $total = (int) $total_result['total'];
-            
+
             if (empty($customer_ids)) {
                 return [
                     'status' => 'success',
@@ -204,16 +204,16 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $options = [
                 'language_id' => $language_id,
                 'anonymize' => $anonymize,
                 'include_billing_address' => isset($_GET['include_billing']) && $_GET['include_billing'] !== 'false',
                 'include_shipping_address' => isset($_GET['include_shipping']) && $_GET['include_shipping'] !== 'false'
             ];
-            
+
             $buyers = $this->converter->convertMultipleCustomers($customer_ids, $options);
-            
+
             return [
                 'status' => 'success',
                 'data' => $buyers,
@@ -229,7 +229,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 500 Internal Server Error');
             return [
@@ -248,7 +248,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
             $anonymize = isset($_GET['anonymize']) && $_GET['anonymize'] === 'true';
-            
+
             $options = [
                 'language_id' => $language_id,
                 'anonymize' => $anonymize,
@@ -257,9 +257,9 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                 'include_billing_address' => isset($_GET['include_billing']) && $_GET['include_billing'] !== 'false',
                 'include_shipping_address' => isset($_GET['include_shipping']) && $_GET['include_shipping'] !== 'false'
             ];
-            
+
             $buyers = $this->converter->searchCustomers($search_query, $options);
-            
+
             return [
                 'status' => 'success',
                 'data' => $buyers,
@@ -274,7 +274,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -291,12 +291,12 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
         try {
             $language_id = $this->getLanguageId($headers);
             $anonymize = isset($_GET['anonymize']) && $_GET['anonymize'] === 'true';
-            
+
             // Validate customer IDs
             $valid_customer_ids = array_filter($customer_ids, function($id) {
                 return is_numeric($id) && $id > 0;
             });
-            
+
             if (empty($valid_customer_ids)) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -306,16 +306,16 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => date('c')
                 ];
             }
-            
+
             $options = [
                 'language_id' => $language_id,
                 'anonymize' => $anonymize,
                 'include_billing_address' => true,
                 'include_shipping_address' => true
             ];
-            
+
             $buyers = $this->converter->convertMultipleCustomers($valid_customer_ids, $options);
-            
+
             return [
                 'status' => 'success',
                 'data' => $buyers,
@@ -328,7 +328,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -350,7 +350,7 @@ class UcpWellKnownBuyersModuleFrontController extends ModuleFrontController
                 return (int) $language_id;
             }
         }
-        
+
         // Fall back to default language
         return (int) Configuration::get('PS_LANG_DEFAULT');
     }

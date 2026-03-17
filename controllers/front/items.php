@@ -65,15 +65,15 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
     private function processRequest($method, $log_data)
     {
         $headers = $this->validator->getExtractedHeaders();
-        
+
         switch ($method) {
             case 'GET':
                 return $this->handleGet($headers, $log_data);
-            
+
             case 'POST':
                 $input = $this->getJsonInput();
                 return $this->handlePost($headers, $input, $log_data);
-            
+
             default:
                 header('HTTP/1.1 405 Method Not Allowed');
                 return [
@@ -87,7 +87,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
     private function handleGet($headers, $log_data)
     {
         $input = $_GET;
-        
+
         // Handle different GET endpoints
         if (isset($input['product_id'])) {
             return $this->getSingleProduct($input['product_id'], $headers, $log_data);
@@ -120,9 +120,9 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $product_id = (int) $product_id;
             $language_id = $this->getLanguageId($headers);
             $include_combinations = $this->shouldIncludeCombinations($_GET);
-            
+
             $ucp_item = $this->converter->convertProductToUcpItem($product_id, $language_id, $include_combinations);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_item,
@@ -134,7 +134,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 404 Not Found');
             return [
@@ -153,7 +153,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $language_id = $this->getLanguageId($headers);
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
-            
+
             // Get active products in category using a more precise query
             $sql = new DbQuery();
             $sql->select('p.id_product');
@@ -167,10 +167,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $sql->where('cp.id_category = ' . $category_id);
             $sql->orderBy('pl.name', 'ASC');
             $sql->limit($limit, $offset);
-            
+
             $products = Db::getInstance()->executeS($sql);
             $product_ids = array_column($products, 'id_product');
-            
+
             // Get total count for pagination
             $count_sql = new DbQuery();
             $count_sql->select('COUNT(DISTINCT p.id_product) as total');
@@ -180,10 +180,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $count_sql->where('p.active = 1');
             $count_sql->where('ps.active = 1');
             $count_sql->where('cp.id_category = ' . $category_id);
-            
+
             $total_result = Db::getInstance()->getRow($count_sql);
             $total = (int) $total_result['total'];
-            
+
             if (empty($product_ids)) {
                 return [
                     'status' => 'success',
@@ -200,10 +200,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $include_combinations = $this->shouldIncludeCombinations($_GET);
             $ucp_items = $this->converter->convertMultipleProducts($product_ids, $language_id, $include_combinations);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_items,
@@ -220,7 +220,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -238,7 +238,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $language_id = $this->getLanguageId($headers);
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
-            
+
             // Search active products using a more precise query
             $sql = new DbQuery();
             $sql->select('p.id_product');
@@ -251,10 +251,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $sql->where('(pl.name LIKE "%' . pSQL($search_query) . '%" OR pl.description LIKE "%' . pSQL($search_query) . '%" OR pl.description_short LIKE "%' . pSQL($search_query) . '%")');
             $sql->orderBy('pl.name', 'ASC');
             $sql->limit($limit, $offset);
-            
+
             $products = Db::getInstance()->executeS($sql);
             $product_ids = array_column($products, 'id_product');
-            
+
             // Get total count for pagination
             $count_sql = new DbQuery();
             $count_sql->select('COUNT(DISTINCT p.id_product) as total');
@@ -264,10 +264,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $count_sql->where('p.active = 1');
             $count_sql->where('ps.active = 1');
             $count_sql->where('(pl.name LIKE "%' . pSQL($search_query) . '%" OR pl.description LIKE "%' . pSQL($search_query) . '%" OR pl.description_short LIKE "%' . pSQL($search_query) . '%")');
-            
+
             $total_result = Db::getInstance()->getRow($count_sql);
             $total = (int) $total_result['total'];
-            
+
             if (empty($product_ids)) {
                 return [
                     'status' => 'success',
@@ -282,10 +282,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $include_combinations = $this->shouldIncludeCombinations($_GET);
             $ucp_items = $this->converter->convertMultipleProducts($product_ids, $language_id, $include_combinations);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_items,
@@ -300,7 +300,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -318,7 +318,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $language_id = $this->getLanguageId($headers);
             $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 10;
             $offset = isset($_GET['offset']) ? (int) $_GET['offset'] : 0;
-            
+
             // Get all active and visible products using a more precise query
             $sql = new DbQuery();
             $sql->select('p.id_product');
@@ -330,10 +330,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $sql->where('pl.name IS NOT NULL AND pl.name != ""');
             $sql->orderBy('pl.name', 'ASC');
             $sql->limit($limit, $offset);
-            
+
             $products = Db::getInstance()->executeS($sql);
             $product_ids = array_column($products, 'id_product');
-            
+
             // Get total count for pagination
             $count_sql = new DbQuery();
             $count_sql->select('COUNT(DISTINCT p.id_product) as total');
@@ -341,10 +341,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
             $count_sql->leftJoin('product_shop', 'ps', 'ps.id_product = p.id_product AND ps.id_shop = ' . (int)Context::getContext()->shop->id);
             $count_sql->where('p.active = 1');
             $count_sql->where('ps.active = 1');
-            
+
             $total_result = Db::getInstance()->getRow($count_sql);
             $total = (int) $total_result['total'];
-            
+
             if (empty($product_ids)) {
                 return [
                     'status' => 'success',
@@ -360,10 +360,10 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     ]
                 ];
             }
-            
+
             $include_combinations = $this->shouldIncludeCombinations($_GET);
             $ucp_items = $this->converter->convertMultipleProducts($product_ids, $language_id, $include_combinations);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_items,
@@ -379,7 +379,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 500 Internal Server Error');
             return [
@@ -396,12 +396,12 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
         try {
             $language_id = $this->getLanguageId($headers);
             $include_combinations = $this->shouldIncludeCombinations($_GET);
-            
+
             // Validate product IDs
             $valid_product_ids = array_filter($product_ids, function($id) {
                 return is_numeric($id) && $id > 0;
             });
-            
+
             if (empty($valid_product_ids)) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
@@ -411,9 +411,9 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => date('c')
                 ];
             }
-            
+
             $ucp_items = $this->converter->convertMultipleProducts($valid_product_ids, $language_id, $include_combinations);
-            
+
             return [
                 'status' => 'success',
                 'data' => $ucp_items,
@@ -426,7 +426,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                     'timestamp' => $log_data['timestamp']
                 ]
             ];
-            
+
         } catch (Exception $e) {
             header('HTTP/1.1 400 Bad Request');
             return [
@@ -448,7 +448,7 @@ class UcpWellKnownItemsModuleFrontController extends ModuleFrontController
                 return (int) $language_id;
             }
         }
-        
+
         // Fall back to default language
         return (int) Configuration::get('PS_LANG_DEFAULT');
     }

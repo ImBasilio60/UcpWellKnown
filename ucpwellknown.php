@@ -25,7 +25,7 @@ class UcpWellKnown extends Module
         if (!parent::install()) {
             return false;
         }
-        
+
         return true;
     }
 
