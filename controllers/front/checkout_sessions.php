@@ -2,9 +2,9 @@
 
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpHeaderValidator.php';
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCheckoutSessionValidator.php';
-require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCartManager.php';
+require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpSessionManager.php';
 require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpBuyerManager.php';
-require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCheckoutSessionUpdater.php';
+require_once _PS_MODULE_DIR_ . 'ucpwellknown/classes/UcpCartManager.php';
 
 class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontController
 {
@@ -13,16 +13,14 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
 
     private $validator;
     private $session_validator;
-    private $cart_manager;
-    private $buyer_manager;
+    private $session_manager;
 
     public function __construct()
     {
         parent::__construct();
         $this->validator = new UcpHeaderValidator();
         $this->session_validator = new UcpCheckoutSessionValidator();
-        $this->cart_manager = new UcpCartManager();
-        $this->buyer_manager = new UcpBuyerManager();
+        $this->session_manager = new UcpSessionManager();
     }
 
     public function initContent()
@@ -77,14 +75,31 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         $checkout_session_id = $_GET['checkout_session_id'] ?? null;
         $is_update_request = !empty($checkout_session_id);
 
-        if ($is_update_request && $method === 'POST') {
-            // Treat POST with checkout_session_id as PUT request
+        // Check if this is a finalize request
+        $is_finalize_request = false;
+        $request_uri = $_SERVER['REQUEST_URI'] ?? '';
+        $action = $_GET['action'] ?? '';
+        
+        if (strpos($request_uri, '/finalize') !== false || strpos($request_uri, 'finalize') !== false || $action === 'finalize') {
+            $is_finalize_request = true;
+            // Extraire l'ID de la session depuis l'URL ou le paramètre
+            if (preg_match('/\/checkout_sessions\/([^\/]+)\/finalize/', $request_uri, $matches)) {
+                $checkout_session_id = $matches[1];
+            }
+        }
+
+        if ($is_update_request && $method === 'POST' && !$is_finalize_request) {
+            // Treat POST with checkout_session_id as PUT request (but not for finalize)
             $method = 'PUT';
         }
 
         switch ($method) {
             case 'POST':
-                if ($is_update_request) {
+                if ($is_finalize_request) {
+                    // Handle finalization
+                    $input = $this->getJsonInput();
+                    return $this->handleFinalizeCheckoutSession($headers, $checkout_session_id, $input, $log_data);
+                } elseif ($is_update_request) {
                     // Handle as PUT request
                     $input = $this->getJsonInput();
                     return $this->handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data);
@@ -130,64 +145,24 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 ];
             }
 
-            // Gérer l'identité du buyer avec toutes les validations
-            $buyer_result = $this->buyer_manager->handleBuyerIdentity($input['buyer'], $headers);
+            // Generate unique checkout ID
+            $checkout_id = $this->generateCheckoutId();
 
-            if (!$buyer_result['success']) {
-                header('HTTP/1.1 ' . $buyer_result['code']);
-                return [
-                    'error' => $buyer_result['error'],
-                    'code' => $buyer_result['code'],
-                    'details' => $buyer_result['details'] ?? [],
-                    'timestamp' => date('c')
-                ];
-            }
-
-            // Process line items and validate products
-            $validated_items = $this->session_validator->validateLineItems($input['line_items']);
-
-            if (!$validated_items['valid']) {
-                header('HTTP/1.1 400 Bad Request');
-                return [
-                    'error' => 'Invalid line items',
-                    'code' => 400,
-                    'details' => $validated_items['errors'],
-                    'timestamp' => date('c')
-                ];
-            }
-
-            // Create cart and add products avec le customer_id
-            $cart_result = $this->cart_manager->createCartWithItems(
-                $validated_items['items'],
+            // Create temporary UCP session (NO PrestaShop interaction)
+            $session_data = $this->session_manager->createSession(
+                $checkout_id,
                 $input['buyer'],
-                $buyer_result['customer_id']
+                $input['line_items'],
+                $headers
             );
 
-            if (!$cart_result['success']) {
-                header('HTTP/1.1 500 Internal Server Error');
-                return [
-                    'error' => 'Failed to create cart',
-                    'code' => 500,
-                    'message' => $cart_result['error'],
-                    'timestamp' => date('c')
-                ];
-            }
-
-            // Calculate totals
-            $totals = $this->cart_manager->calculateCartTotals($cart_result['cart_id']);
-
-            // Generate unique checkout ID
-            $checkout_id = $this->generateCheckoutId($cart_result['cart_id']);
-
-            // Log successful checkout session creation
+            // Log successful checkout session creation (temporary)
             PrestaShopLogger::addLog(
-                'UCP Checkout Session Created: ' . json_encode([
+                'UCP Temporary Session Created: ' . json_encode([
                     'checkout_id' => $checkout_id,
-                    'cart_id' => $cart_result['cart_id'],
-                    'customer_id' => $buyer_result['customer_id'],
                     'request_id' => $headers['request-id'],
-                    'items_count' => count($validated_items['items']),
-                    'is_new_customer' => $buyer_result['is_new_customer']
+                    'items_count' => count($input['line_items']),
+                    'status' => 'temporary'
                 ]),
                 1, // Info level
                 null,
@@ -199,23 +174,19 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
             return [
                 'status' => 'success',
                 'checkout_id' => $checkout_id,
-                'cart_id' => $cart_result['cart_id'],
-                'customer_id' => $buyer_result['customer_id'],
-                'customer_info' => [
-                    'id' => $buyer_result['customer_data']['id'],
-                    'email' => $buyer_result['customer_data']['email'],
-                    'first_name' => $buyer_result['customer_data']['first_name'],
-                    'last_name' => $buyer_result['customer_data']['last_name'],
-                    'is_new_customer' => $buyer_result['is_new_customer']
-                ],
-                'line_items' => $validated_items['items'],
-                'buyer' => $input['buyer'],
-                'totals' => $totals,
-                'created_at' => date('c'),
-                'expires_at' => date('c', strtotime('+1 hour')),
+                'session_type' => 'temporary',
+                'line_items' => $session_data['line_items'],
+                'buyer' => $session_data['buyer'],
+                'totals' => $session_data['totals'],
+                'created_at' => $session_data['created_at'],
+                'expires_at' => $session_data['expires_at'],
                 'request_info' => [
                     'request_id' => $headers['request-id'],
                     'idempotency_key' => $headers['idempotency-key']
+                ],
+                'next_steps' => [
+                    'modify_session' => 'PUT /checkout_sessions?checkout_session_id=' . $checkout_id,
+                    'finalize_session' => 'POST /checkout_sessions?checkout_session_id=' . $checkout_id . '&action=finalize'
                 ]
             ];
 
@@ -239,8 +210,42 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         $checkout_session_id = $_GET['checkout_session_id'] ?? null;
         
         if ($checkout_session_id) {
-            // Retrieve specific checkout session details
-            return $this->getCheckoutSessionDetails($checkout_session_id, $headers, $log_data);
+            // Retrieve specific checkout session details from temporary storage
+            $session_data = $this->session_manager->getSession($checkout_session_id);
+            
+            if (!$session_data) {
+                header('HTTP/1.1 404 Not Found');
+                return [
+                    'error' => 'Checkout session not found or expired',
+                    'code' => 404,
+                    'timestamp' => date('c')
+                ];
+            }
+
+            return [
+                'status' => 'success',
+                'checkout_id' => $checkout_session_id,
+                'session_type' => $session_data['finalized'] ? 'finalized' : 'temporary',
+                'line_items' => $session_data['line_items'],
+                'buyer' => $session_data['buyer'],
+                'totals' => $session_data['totals'],
+                'applied_promo_codes' => $session_data['applied_promo_codes'],
+                'created_at' => $session_data['created_at'],
+                'updated_at' => $session_data['updated_at'] ?? $session_data['created_at'],
+                'expires_at' => $session_data['expires_at'],
+                'prestashop_cart_id' => $session_data['prestashop_cart_id'],
+                'prestashop_customer_id' => $session_data['prestashop_customer_id'],
+                'finalized' => $session_data['finalized'],
+                'request_info' => [
+                    'request_id' => $headers['request-id'],
+                    'ucp_agent' => $headers['ucp-agent'],
+                    'timestamp' => $log_data['timestamp']
+                ],
+                'next_steps' => $session_data['finalized'] ? [] : [
+                    'modify_session' => 'PUT /checkout_sessions?checkout_session_id=' . $checkout_session_id,
+                    'finalize_session' => 'POST /checkout_sessions?checkout_session_id=' . $checkout_session_id . '&action=finalize'
+                ]
+            ];
         }
         
         // Return general endpoint information
@@ -254,57 +259,67 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 'timestamp' => $log_data['timestamp']
             ],
             'endpoints' => [
-                'POST /checkout-sessions' => 'Create a new checkout session',
+                'POST /checkout-sessions' => 'Create a new temporary checkout session',
                 'GET /checkout-sessions?checkout_session_id={id}' => 'Retrieve checkout session details',
-                'PUT /checkout-sessions?checkout_session_id={id}' => 'Update checkout session (apply/remove promo codes)'
+                'PUT /checkout-sessions?checkout_session_id={id}' => 'Update checkout session (apply/remove promo codes)',
+                'POST /checkout-sessions?checkout_session_id={id}&action=finalize' => 'Finalize session and create PrestaShop cart'
             ]
         ];
     }
 
-    private function getCheckoutSessionDetails($checkout_session_id, $headers, $log_data)
+    /**
+     * Handle finalization of checkout session
+     */
+    private function handleFinalizeCheckoutSession($headers, $checkout_session_id, $input, $log_data)
     {
         try {
-            // Validate checkout session ID format
-            if (empty($checkout_session_id) || !preg_match('/^ucs_[a-f0-9]+_\d+_\d+$/', $checkout_session_id)) {
+            // Validate checkout session ID
+            if (empty($checkout_session_id)) {
                 header('HTTP/1.1 400 Bad Request');
                 return [
-                    'error' => 'Invalid checkout session ID format',
+                    'error' => 'Missing checkout session ID',
                     'code' => 400,
                     'timestamp' => date('c')
                 ];
             }
 
-            // Get cart details using the checkout session ID
-            $cart_result = $this->cart_manager->getCartByCheckoutSessionId($checkout_session_id);
+            // Finalize the session (create PrestaShop cart and customer)
+            $finalize_result = $this->session_manager->finalizeSession($checkout_session_id);
             
-            if (!$cart_result['success']) {
-                header('HTTP/1.1 404 Not Found');
+            if (!$finalize_result['success']) {
+                $code = $finalize_result['code'] ?? 500;
+                header("HTTP/1.1 $code " . $this->getStatusText($code));
                 return [
-                    'error' => 'Checkout session not found',
-                    'code' => 404,
+                    'error' => $finalize_result['error'],
+                    'code' => $code,
+                    'details' => $finalize_result['details'] ?? [],
                     'timestamp' => date('c')
                 ];
             }
 
-            $cart = $cart_result['cart'];
-            
-            // Get cart details and totals
-            $cart_details = $this->cart_manager->getCartDetails($cart->id);
-            $cart_totals = $this->cart_manager->calculateCartTotals($cart->id);
-            
-            // Get applied promotional rules
-            $applied_rules = $this->cart_manager->getAppliedRules($cart->id);
-            
-            // Build response
+            // Log successful finalization
+            PrestaShopLogger::addLog(
+                'UCP Session Finalized: ' . json_encode([
+                    'checkout_id' => $checkout_session_id,
+                    'cart_id' => $finalize_result['cart_id'],
+                    'customer_id' => $finalize_result['customer_id'],
+                    'request_id' => $headers['request-id']
+                ]),
+                1, // Info level
+                null,
+                'UcpWellKnown',
+                0,
+                true
+            );
+
             return [
                 'status' => 'success',
                 'checkout_id' => $checkout_session_id,
-                'cart_id' => $cart->id,
-                'customer_id' => $cart->id_customer,
-                'items' => $cart_details['products'],
-                'totals' => $cart_totals,
-                'applied_rules' => $applied_rules,
-                'created_at' => date('c', strtotime($cart->date_add)),
+                'session_type' => 'finalized',
+                'prestashop_cart_id' => $finalize_result['cart_id'],
+                'prestashop_customer_id' => $finalize_result['customer_id'],
+                'finalized_at' => $finalize_result['session_data']['finalized_at'],
+                'message' => 'Session finalized successfully. PrestaShop cart created.',
                 'request_info' => [
                     'request_id' => $headers['request-id'],
                     'ucp_agent' => $headers['ucp-agent'],
@@ -323,21 +338,9 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         }
     }
 
-    private function getCheckoutSessionId()
-    {
-        $request_uri = $_SERVER['REQUEST_URI'] ?? '';
-        $parsed_url = parse_url($request_uri);
-        $path = $parsed_url['path'] ?? '';
-
-        // Extract checkout session ID from URL pattern: /checkout-sessions/{id}
-        $pattern = '/\/checkout-sessions\/([^\/]+)/';
-        if (preg_match($pattern, $path, $matches)) {
-            return $matches[1];
-        }
-
-        return null;
-    }
-
+    /**
+     * Handle PUT request to update checkout session
+     */
     private function handlePutCheckoutSession($headers, $checkout_session_id, $input, $log_data)
     {
         try {
@@ -351,24 +354,64 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 ];
             }
 
-            // Initialize checkout session updater
-            $session_updater = new UcpCheckoutSessionUpdater();
+            // Update the temporary session
+            $session_data = $this->session_manager->updateSession($checkout_session_id, $input);
             
-            // Update the checkout session
-            $update_result = $session_updater->updateCheckoutSession($checkout_session_id, $input, $headers);
-            
-            if (!$update_result['success']) {
-                $code = $update_result['code'] ?? 500;
-                header("HTTP/1.1 $code " . $this->getStatusText($code));
+            if (!$session_data) {
+                header('HTTP/1.1 404 Not Found');
                 return [
-                    'error' => $update_result['error'],
-                    'code' => $code,
-                    'details' => $update_result['details'] ?? [],
+                    'error' => 'Checkout session not found or expired',
+                    'code' => 404,
                     'timestamp' => date('c')
                 ];
             }
 
-            return $update_result;
+            // Vérifier s'il y a des erreurs de validation (ex: code promo invalide)
+            if (!empty($session_data['validation_errors'])) {
+                header('HTTP/1.1 400 Bad Request');
+                return [
+                    'error' => 'Validation failed',
+                    'code' => 400,
+                    'details' => $session_data['validation_errors'],
+                    'timestamp' => date('c'),
+                    'applied_promo_codes' => $session_data['applied_promo_codes']
+                ];
+            }
+
+            // Log session update
+            PrestaShopLogger::addLog(
+                'UCP Temporary Session Updated: ' . json_encode([
+                    'checkout_id' => $checkout_session_id,
+                    'request_id' => $headers['request-id'],
+                    'items_count' => count($session_data['line_items'])
+                ]),
+                1, // Info level
+                null,
+                'UcpWellKnown',
+                0,
+                true
+            );
+
+            return [
+                'status' => 'success',
+                'checkout_id' => $checkout_session_id,
+                'session_type' => 'temporary',
+                'line_items' => $session_data['line_items'],
+                'buyer' => $session_data['buyer'],
+                'totals' => $session_data['totals'],
+                'applied_promo_codes' => $session_data['applied_promo_codes'],
+                'updated_at' => $session_data['updated_at'] ?? $session_data['created_at'],
+                'expires_at' => $session_data['expires_at'],
+                'request_info' => [
+                    'request_id' => $headers['request-id'],
+                    'ucp_agent' => $headers['ucp-agent'],
+                    'timestamp' => $log_data['timestamp']
+                ],
+                'next_steps' => [
+                    'modify_session' => 'PUT /checkout_sessions?checkout_session_id=' . $checkout_session_id,
+                    'finalize_session' => 'POST /checkout_sessions?checkout_session_id=' . $checkout_session_id . '&action=finalize'
+                ]
+            ];
 
         } catch (Exception $e) {
             header('HTTP/1.1 500 Internal Server Error');
@@ -380,7 +423,7 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
             ];
         }
     }
-    
+
     /**
      * Get HTTP status text
      */
@@ -389,15 +432,31 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
         $status_texts = [
             400 => 'Bad Request',
             404 => 'Not Found',
+            409 => 'Conflict',
             500 => 'Internal Server Error'
         ];
         
         return $status_texts[$code] ?? 'Error';
     }
 
-    private function generateCheckoutId($cart_id)
+    private function generateCheckoutId()
     {
-        return 'ucs_' . uniqid() . '_' . $cart_id . '_' . time();
+        return 'ucs_' . uniqid() . '_' . time();
+    }
+
+    private function getCheckoutSessionId()
+    {
+        $request_uri = $_SERVER['REQUEST_URI'] ?? '';
+        $parsed_url = parse_url($request_uri);
+        $path = $parsed_url['path'] ?? '';
+
+        // Extract checkout session ID from URL pattern: /checkout-sessions/{id}
+        $pattern = '/\/checkout-sessions\/([^\/]+)/';
+        if (preg_match($pattern, $path, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 
     private function getJsonInput()
