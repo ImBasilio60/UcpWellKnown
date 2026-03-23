@@ -391,7 +391,7 @@ class UcpSessionManager
     {
         try {
             // Récupérer les codes promo actifs depuis la table ps_cart_rule
-            $sql = 'SELECT cr.code 
+            $sql = 'SELECT cr.code, cr.id_cart_rule, cr.active, cr.date_from, cr.date_to
                     FROM ' . _DB_PREFIX_ . 'cart_rule cr
                     WHERE cr.active = 1 
                     AND cr.code IS NOT NULL 
@@ -402,28 +402,32 @@ class UcpSessionManager
             
             $codes = Db::getInstance()->executeS($sql);
             
+            // Debug: logger les résultats de la requête
+            error_log('UCP DEBUG: Requête promo codes: ' . $sql);
+            error_log('UCP DEBUG: Résultat brut: ' . print_r($codes, true));
+            
             if (!$codes) {
-                // En cas d'erreur ou si aucun code trouvé, retourner les codes de test
-                return ['TEST10', 'TEST20', 'SAVE10', 'WELCOME', 'PROMO2026', 'PROMO20'];
+                error_log('UCP DEBUG: Aucun code promo trouvé dans la base de données');
+                return [];
             }
             
             // Extraire uniquement les codes en majuscules
             $valid_codes = [];
             foreach ($codes as $code_row) {
-                $valid_codes[] = strtoupper(trim($code_row['code']));
+                $code = strtoupper(trim($code_row['code']));
+                if (!empty($code)) {
+                    $valid_codes[] = $code;
+                    error_log('UCP DEBUG: Code promo trouvé: ' . $code . ' (ID: ' . $code_row['id_cart_rule'] . ')');
+                }
             }
             
-            // Ajouter les codes de test si aucun code réel trouvé
-            if (empty($valid_codes)) {
-                return ['TEST10', 'TEST20', 'SAVE10', 'WELCOME', 'PROMO2026', 'PROMO20'];
-            }
-            
+            error_log('UCP DEBUG: Total codes promo valides: ' . count($valid_codes));
             return $valid_codes;
             
         } catch (Exception $e) {
-            // En cas d'erreur de base de données, utiliser les codes de test
-            error_log('UCP Promo Code Error: ' . $e->getMessage());
-            return ['TEST10', 'TEST20', 'SAVE10', 'WELCOME', 'PROMO2026', 'PROMO20'];
+            // Logger l'erreur et retourner un tableau vide
+            error_log('UCP ERROR: Erreur lors de la récupération des codes promo: ' . $e->getMessage());
+            return [];
         }
     }
 
