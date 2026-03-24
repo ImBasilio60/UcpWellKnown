@@ -342,8 +342,11 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
                 'session_type' => 'finalized',
                 'prestashop_cart_id' => $finalize_result['cart_id'],
                 'prestashop_customer_id' => $finalize_result['customer_id'],
+                'prestashop_order_id' => $finalize_result['order_id'],
+                'prestashop_order_reference' => $finalize_result['order_reference'],
+                'order_created' => $finalize_result['order_created'],
                 'finalized_at' => $finalize_result['session_data']['finalized_at'],
-                'message' => 'Session finalized successfully. PrestaShop cart created.',
+                'message' => 'Session finalized successfully. ' . ($finalize_result['order_created'] ? 'PrestaShop cart and order created.' : 'PrestaShop cart created, order creation failed.'),
                 'request_info' => [
                     'request_id' => $headers['request-id'],
                     'ucp_agent' => $headers['ucp-agent'],

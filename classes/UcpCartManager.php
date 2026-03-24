@@ -31,11 +31,23 @@ class UcpCartManager
                 $cart->id_guest = $this->createOrGetGuest($buyer['email']);
             }
 
+            // Set default carrier if available
+            $cart->id_carrier = $this->getDefaultCarrier();
+
             if (!$cart->add()) {
                 return [
                     'success' => false,
                     'error' => 'Failed to create cart'
                 ];
+            }
+
+            // Set addresses if customer exists
+            if ($customer_id > 0) {
+                $address_id = $this->getOrCreateCustomerAddress($customer_id, $buyer);
+                if ($address_id) {
+                    $cart->id_address_delivery = $address_id;
+                    $cart->id_address_invoice = $address_id;
+                }
             }
 
             // Add products to cart
@@ -51,8 +63,17 @@ class UcpCartManager
                 }
             }
 
-            // Update cart totals
+            // Update cart totals and delivery options
             $cart->update();
+            
+            // Set delivery option to avoid warnings
+            if ($cart->id_address_delivery) {
+                $delivery_option = $cart->getDeliveryOption();
+                if (empty($delivery_option) || !is_array($delivery_option)) {
+                    // Set a default delivery option
+                    $cart->setDeliveryOption([$cart->id_address_delivery => $cart->id_carrier . ',']);
+                }
+            }
 
             return [
                 'success' => true,
@@ -521,6 +542,76 @@ class UcpCartManager
 
         } catch (Exception $e) {
             return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Get default carrier
+     */
+    private function getDefaultCarrier()
+    {
+        try {
+            $sql = 'SELECT id_carrier FROM ' . _DB_PREFIX_ . 'carrier WHERE active = 1 AND deleted = 0 ORDER BY position ASC';
+            $carriers = Db::getInstance()->executeS($sql);
+            
+            if (!empty($carriers)) {
+                return (int)$carriers[0]['id_carrier'];
+            }
+            
+            return 1; // Fallback
+        } catch (Exception $e) {
+            return 1; // Fallback
+        }
+    }
+
+    /**
+     * Get or create customer address
+     */
+    private function getOrCreateCustomerAddress($customer_id, $buyer)
+    {
+        try {
+            $customer = new Customer($customer_id);
+            if (!Validate::isLoadedObject($customer)) {
+                return false;
+            }
+
+            // Check if customer already has addresses
+            $addresses = $customer->getAddresses($this->context->language->id);
+            if (!empty($addresses)) {
+                return $addresses[0]['id_address'];
+            }
+
+            // Create new address
+            $address = new Address();
+            $address->id_customer = $customer_id;
+            $address->firstname = $buyer['first_name'];
+            $address->lastname = $buyer['last_name'];
+            $address->address1 = $buyer['address'];
+            $address->city = $buyer['city'];
+            $address->postcode = $buyer['postal_code'];
+            $address->phone = $buyer['phone'];
+            $address->company = $buyer['company'] ?? '';
+            $address->alias = 'UCP Address';
+            $address->active = 1;
+            
+            // Set country
+            $country_id = 8; // France default
+            if (!empty($buyer['country'])) {
+                $sql = 'SELECT id_country FROM ' . _DB_PREFIX_ . 'country WHERE iso_code = "' . pSQL(strtoupper($buyer['country'])) . '" AND active = 1';
+                $result = Db::getInstance()->getValue($sql);
+                if ($result) {
+                    $country_id = $result;
+                }
+            }
+            $address->id_country = $country_id;
+            
+            if ($address->add()) {
+                return $address->id;
+            }
+            
+            return false;
+        } catch (Exception $e) {
+            return false;
         }
     }
 }

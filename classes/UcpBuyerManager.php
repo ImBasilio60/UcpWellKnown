@@ -285,22 +285,12 @@ class UcpBuyerManager
         $result = Db::getInstance()->getRow($sql);
 
         if ($result) {
-            $customer = new Customer();
-            $customer->id = $result['id_customer'];
-            $customer->email = $result['email'];
-            $customer->firstname = $result['firstname'];
-            $customer->lastname = $result['lastname'];
-            $customer->phone = $result['phone'] ?? '';
-            $customer->company = $result['company'] ?? '';
-            $customer->active = $result['active'];
-            $customer->is_guest = $result['is_guest'];
-            $customer->id_default_group = $result['id_default_group'];
-            $customer->id_address = $result['id_address'] ?? 0;
-            $customer->date_add = $result['date_add'];
-            $customer->deleted = $result['deleted'];
-            $customer->passwd = $result['passwd'] ?? ''; // Inclure le mot de passe
-
-            return $customer;
+            // Créer l'objet Customer proprement
+            $customer = new Customer($result['id_customer']);
+            
+            if (Validate::isLoadedObject($customer)) {
+                return $customer;
+            }
         }
 
         return null;
@@ -389,33 +379,32 @@ class UcpBuyerManager
             $customer->active = 1;
             $customer->is_guest = 0; // Client normal, pas invité
 
-            // Définir le groupe par défaut
-            $default_group = 3; // Groupe client par défaut dans PrestaShop
+            // Définir le groupe par défaut (vérifier qu'il existe)
+            $default_group = Configuration::get('PS_CUSTOMER_GROUP');
+            if (!$default_group) {
+                $default_group = 3; // Groupe client par défaut dans PrestaShop
+            }
             $customer->id_default_group = $default_group;
 
             // Sauvegarder d'abord le client pour obtenir l'ID
             if (!$customer->add()) {
                 return null;
             }
+            
+            // Ajouter le client au groupe
+            $customer->addGroups([$default_group]);
 
             // Créer l'adresse après la sauvegarde du client
             if (!empty($normalized_buyer['address']) && !empty($normalized_buyer['city'])) {
                 $address_id = $this->createCustomerAddress($customer->id, $normalized_buyer);
-                if ($address_id) {
-                    $customer->id_address = $address_id;
-                    $customer->update();
-                }
+                // L'adresse est automatiquement associée au client via la méthode createCustomerAddress
+                // Pas besoin de mettre à jour customer->id_address car cette propriété n'existe pas
             }
 
             return $customer;
 
         } catch (Exception $e) {
-            // Log simple
-            file_put_contents(
-                dirname(__FILE__) . '/../logs/ucp_errors.log',
-                'UCP Customer Creation Error: ' . $e->getMessage() . PHP_EOL,
-                FILE_APPEND
-            );
+            error_log('UCP: Error creating new customer: ' . $e->getMessage());
             return null;
         }
     }
@@ -483,6 +472,13 @@ class UcpBuyerManager
      */
     private function formatCustomerData($customer)
     {
+        // Obtenir l'adresse par défaut du client
+        $default_address_id = 0;
+        $addresses = $customer->getAddresses(Configuration::get('PS_LANG_DEFAULT'));
+        if (!empty($addresses)) {
+            $default_address_id = $addresses[0]['id_address'];
+        }
+        
         return [
             'id' => $customer->id,
             'email' => $customer->email,
@@ -492,7 +488,7 @@ class UcpBuyerManager
             'company' => $customer->company,
             'is_guest' => (bool)$customer->is_guest,
             'date_add' => $customer->date_add,
-            'default_address_id' => $customer->id_address
+            'default_address_id' => $default_address_id
         ];
     }
 
@@ -522,5 +518,26 @@ class UcpBuyerManager
     public function getErrors()
     {
         return $this->errors;
+    }
+
+    /**
+     * Créer un client pour les tests (bypass authentification)
+     */
+    public function createCustomerForTest($buyer_data)
+    {
+        try {
+            // Normaliser les données
+            $normalized_buyer = $this->normalizeBuyerData($buyer_data);
+            
+            // Créer le client
+            $customer_result = $this->getOrCreateCustomer($normalized_buyer);
+            
+            return $customer_result;
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'errors' => ['Test customer creation error: ' . $e->getMessage()]
+            ];
+        }
     }
 }

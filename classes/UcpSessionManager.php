@@ -12,10 +12,40 @@ class UcpSessionManager
 
     public function __construct()
     {
+        // Utiliser le répertoire temp du module par défaut
         $this->storage_path = dirname(__FILE__) . '/../temp/sessions/';
+        
+        // Créer le répertoire s'il n'existe pas
         if (!file_exists($this->storage_path)) {
-            mkdir($this->storage_path, 0755, true);
+            if (!mkdir($this->storage_path, 0755, true)) {
+                error_log('UCP ERROR: Failed to create session directory: ' . $this->storage_path);
+                // Fallback sur le répertoire temporaire système
+                $system_temp = sys_get_temp_dir();
+                $this->storage_path = $system_temp . '/ucp_sessions/';
+                if (!file_exists($this->storage_path)) {
+                    mkdir($this->storage_path, 0755, true);
+                }
+            }
         }
+        
+        // Vérifier si le répertoire est accessible en écriture (sans essayer de changer les permissions)
+        if (!is_writable($this->storage_path)) {
+            error_log('UCP WARNING: Session directory is not writable: ' . $this->storage_path . ', using fallback');
+            // Fallback sur le répertoire temporaire système
+            $system_temp = sys_get_temp_dir();
+            $this->storage_path = $system_temp . '/ucp_sessions/';
+            if (!file_exists($this->storage_path)) {
+                mkdir($this->storage_path, 0755, true);
+            }
+        }
+    }
+
+    /**
+     * Obtenir le chemin de stockage des sessions
+     */
+    public function getStoragePath()
+    {
+        return $this->storage_path;
     }
 
     /**
@@ -160,18 +190,34 @@ class UcpSessionManager
             }
         }
 
+        // Créer la commande PrestaShop
+        $order_result = $this->createPrestaShopOrder($cart_result['cart_id'], $buyer_result['customer_id']);
+        if (!$order_result['success']) {
+            // Log l'erreur mais continuer avec le panier créé
+            error_log('UCP: Failed to create order from cart ' . $cart_result['cart_id'] . ': ' . $order_result['error']);
+        }
+
         // Marquer comme finalisé
         $this->session_data['finalized'] = true;
         $this->session_data['prestashop_cart_id'] = $cart_result['cart_id'];
         $this->session_data['prestashop_customer_id'] = $buyer_result['customer_id'];
+        $this->session_data['prestashop_order_id'] = $order_result['success'] ? $order_result['order_id'] : null;
+        $this->session_data['prestashop_order_reference'] = $order_result['success'] ? $order_result['order_reference'] : null;
         $this->session_data['finalized_at'] = date('c');
 
+        // Sauvegarder l'état final avant suppression
         $this->saveSession();
+        
+        // Supprimer le fichier JSON après finalisation réussie
+        $this->deleteSession($sid);
 
         return [
             'success' => true,
             'cart_id' => $cart_result['cart_id'],
             'customer_id' => $buyer_result['customer_id'],
+            'order_id' => $order_result['success'] ? $order_result['order_id'] : null,
+            'order_reference' => $order_result['success'] ? $order_result['order_reference'] : null,
+            'order_created' => $order_result['success'],
             'session_data' => $this->session_data
         ];
     }
@@ -693,8 +739,11 @@ class UcpSessionManager
         
         // Vérifier les permissions d'écriture
         if (!is_writable($this->storage_path)) {
-            error_log('UCP ERROR: Session directory is not writable: ' . $this->storage_path);
-            return false;
+            // Tenter de changer les permissions
+            if (!chmod($this->storage_path, 0755)) {
+                error_log('UCP ERROR: Session directory is not writable and cannot change permissions: ' . $this->storage_path);
+                // Continuer quand même et essayer d'écrire
+            }
         }
         
         $result = file_put_contents($file_path, json_encode($this->session_data, JSON_PRETTY_PRINT));
@@ -735,6 +784,261 @@ class UcpSessionManager
     }
 
     /**
+     * Créer une commande PrestaShop à partir du panier
+     */
+    private function createPrestaShopOrder($cart_id, $customer_id)
+    {
+        try {
+            $cart = new Cart($cart_id);
+            if (!Validate::isLoadedObject($cart)) {
+                return [
+                    'success' => false,
+                    'error' => 'Cart not found'
+                ];
+            }
+
+            $customer = new Customer($customer_id);
+            if (!Validate::isLoadedObject($customer)) {
+                return [
+                    'success' => false,
+                    'error' => 'Customer not found'
+                ];
+            }
+
+            // Vérifier que le panier a des produits
+            $products = $cart->getProducts();
+            if (empty($products)) {
+                return [
+                    'success' => false,
+                    'error' => 'Cart is empty'
+                ];
+            }
+
+            // Créer l'adresse de livraison si nécessaire
+            $address_id = $this->ensureCustomerAddress($customer_id);
+            if (!$address_id) {
+                return [
+                    'success' => false,
+                    'error' => 'Failed to create customer address'
+                ];
+            }
+
+            // Mettre à jour le panier avec l'adresse et le transporteur
+            $cart->id_address_delivery = $address_id;
+            $cart->id_address_invoice = $address_id;
+            
+            // Définir un transporteur par défaut
+            $cart->id_carrier = $this->getDefaultCarrier();
+            $cart->update();
+
+            // Créer la commande
+            $this->context = Context::getContext();
+            $this->context->cart = $cart;
+            $this->context->customer = $customer;
+
+            // S'assurer que le panier a une devise définie
+            if (!$cart->id_currency) {
+                $cart->id_currency = Configuration::get('PS_CURRENCY_DEFAULT');
+                $cart->update();
+            }
+
+            // Obtenir la devise
+            $currency = new Currency($cart->id_currency);
+            if (!Validate::isLoadedObject($currency)) {
+                return [
+                    'success' => false,
+                    'error' => 'Invalid currency for cart'
+                ];
+            }
+            $this->context->currency = $currency;
+
+            // Ajouter la commande en utilisant le processus standard de PrestaShop
+            $order = new Order();
+            $order->id_customer = $customer_id;
+            $order->id_address_delivery = $address_id;
+            $order->id_address_invoice = $address_id;
+            $order->id_cart = $cart_id;
+            $order->id_currency = $cart->id_currency;
+            $order->id_lang = $cart->id_lang;
+            $order->id_shop = $cart->id_shop;
+            $order->id_shop_group = $cart->id_shop_group;
+            $order->id_carrier = $cart->id_carrier; // Ajouter le transporteur
+            $order->conversion_rate = 1; // Taux de conversion par défaut
+            $order->secure_key = $customer->secure_key ?: md5(time() . mt_rand()); // Clé sécurisée du client ou générée
+            
+            // Statut de paiement (en attente)
+            $order->current_state = Configuration::get('PS_OS_PREPARATION'); // En préparation
+            $order->module = 'ucpwellknown'; // Module source
+            $order->payment = 'UCP Payment'; // Méthode de paiement
+            $order->total_paid = $cart->getOrderTotal(true);
+            $order->total_paid_real = $cart->getOrderTotal(true);
+            $order->total_paid_tax_incl = $cart->getOrderTotal(true); // Ajout du champ manquant
+            $order->total_paid_tax_excl = $cart->getOrderTotal(false); // Ajout du champ manquant
+            $order->total_products = $cart->getOrderTotal(false, Cart::ONLY_PRODUCTS);
+            $order->total_products_wt = $cart->getOrderTotal(true, Cart::ONLY_PRODUCTS);
+            $order->total_shipping = 0; // Livraison gratuite pour éviter les warnings
+            $order->total_shipping_tax_excl = 0;
+            $order->total_shipping_tax_incl = 0;
+            $order->total_wrapping = 0;
+            $order->total_wrapping_tax_excl = 0;
+            $order->total_wrapping_tax_incl = 0;
+            $order->total_discounts = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+            $order->total_discounts_tax_excl = $cart->getOrderTotal(false, Cart::ONLY_DISCOUNTS);
+            $order->total_discounts_tax_incl = $cart->getOrderTotal(true, Cart::ONLY_DISCOUNTS);
+            
+            // Générer la référence de commande
+            $order->reference = Order::generateReference();
+            $order->date_add = date('Y-m-d H:i:s');
+            $order->date_upd = date('Y-m-d H:i:s');
+            
+            // Utiliser une méthode simple pour créer la commande avec les produits
+            try {
+                $order_status = Configuration::get('PS_OS_PREPARATION');
+                $order->valid = 1;
+                
+                if (!$order->add()) {
+                    return [
+                        'success' => false,
+                        'error' => 'Failed to create order in database'
+                    ];
+                }
+                
+                // Ajouter les détails de la commande (produits)
+                if (!$this->addOrderDetails($order, $cart)) {
+                    return [
+                        'success' => false,
+                        'error' => 'Failed to add order details'
+                    ];
+                }
+                
+                // Ajouter l'historique des statuts
+                $history = new OrderHistory();
+                $history->id_order = $order->id;
+                $history->id_employee = 0;
+                $history->id_order_state = $order_status;
+                if (!$history->add()) {
+                    error_log('UCP: Failed to add order history for order ' . $order->id);
+                }
+                
+                // Mettre à jour les quantités de produits
+                $this->updateProductQuantities($cart);
+                
+                // Le panier est déjà confirmé par la création de la commande
+                
+            } catch (Exception $e) {
+                error_log('UCP: Exception during order creation: ' . $e->getMessage());
+                return [
+                    'success' => false,
+                    'error' => 'Exception during order creation: ' . $e->getMessage()
+                ];
+            }
+
+            // Logger la création de commande
+            try {
+                PrestaShopLogger::addLog(
+                    'UCP Order Created: Order ID ' . $order->id . ', Reference: ' . $order->reference . ', Cart ID: ' . $cart_id . ', Customer ID: ' . $customer_id,
+                    1, // Info level
+                    null,
+                    'UcpWellKnown',
+                    0,
+                    true
+                );
+            } catch (Exception $e) {
+                error_log('UCP: Failed to log order creation: ' . $e->getMessage());
+            }
+
+            return [
+                'success' => true,
+                'order_id' => $order->id,
+                'order_reference' => $order->reference,
+                'order_total' => $order->total_paid
+            ];
+
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Exception creating order: ' . $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * S'assurer que le client a une adresse
+     */
+    private function ensureCustomerAddress($customer_id)
+    {
+        try {
+            $customer = new Customer($customer_id);
+            if (!Validate::isLoadedObject($customer)) {
+                return false;
+            }
+
+            // Vérifier si le client a déjà une adresse
+            $addresses = $customer->getAddresses(Configuration::get('PS_LANG_DEFAULT'));
+            if (!empty($addresses)) {
+                return $addresses[0]['id_address'];
+            }
+
+            // Créer une adresse avec les données de la session
+            $buyer_data = $this->session_data['buyer'];
+            
+            $address = new Address();
+            $address->id_customer = $customer_id;
+            $address->firstname = $buyer_data['first_name'];
+            $address->lastname = $buyer_data['last_name'];
+            $address->address1 = $buyer_data['address'];
+            $address->city = $buyer_data['city'];
+            $address->postcode = $buyer_data['postal_code'];
+            $address->phone = $buyer_data['phone'];
+            $address->company = $buyer_data['company'] ?? '';
+            
+            // Récupérer l'ID du pays
+            $country_id = 8; // France par défaut
+            if (!empty($buyer_data['country'])) {
+                $sql = 'SELECT id_country FROM ' . _DB_PREFIX_ . 'country WHERE iso_code = "' . pSQL(strtoupper($buyer_data['country'])) . '" AND active = 1';
+                $result = Db::getInstance()->getValue($sql);
+                if ($result) {
+                    $country_id = $result;
+                } else {
+                    // Si le pays n'est pas trouvé, essayer avec le nom
+                    $sql = 'SELECT id_country FROM ' . _DB_PREFIX_ . 'country WHERE name LIKE "%' . pSQL($buyer_data['country']) . '%" AND active = 1';
+                    $result = Db::getInstance()->getValue($sql);
+                    if ($result) {
+                        $country_id = $result;
+                    }
+                }
+            }
+            $address->id_country = $country_id;
+            
+            // Récupérer l'ID de l'état si applicable
+            if (!empty($buyer_data['state'])) {
+                $sql = 'SELECT id_state FROM ' . _DB_PREFIX_ . 'state WHERE iso_code = "' . pSQL(strtoupper($buyer_data['state'])) . '" AND id_country = ' . (int)$country_id;
+                $result = Db::getInstance()->getValue($sql);
+                if ($result) {
+                    $address->id_state = $result;
+                }
+            }
+            
+            // Définir comme adresse par défaut
+            $address->alias = 'UCP Default Address';
+            $address->active = 1;
+            
+            if ($address->add()) {
+                // L'adresse est automatiquement associée au client
+                // Pas besoin de mettre à jour customer->id_address car cette propriété n'existe pas dans PrestaShop
+                
+                return $address->id;
+            }
+
+            return false;
+
+        } catch (Exception $e) {
+            error_log('UCP Address Creation Error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Supprimer une session
      */
     public function deleteSession($sid)
@@ -742,7 +1046,314 @@ class UcpSessionManager
         $file_path = $this->storage_path . $sid . '.json';
         if (file_exists($file_path)) {
             unlink($file_path);
+            // Log la suppression
+            error_log("UCP: Session file deleted: $sid");
             return true;
+        }
+        return false;
+    }
+
+    /**
+     * Nettoyer les sessions expirées
+     */
+    public function cleanupExpiredSessions()
+    {
+        $files = glob($this->storage_path . '*.json');
+        $deleted_count = 0;
+        
+        foreach ($files as $file) {
+            $data = json_decode(file_get_contents($file), true);
+            if ($data && isset($data['expires_at'])) {
+                if (strtotime($data['expires_at']) < time()) {
+                    unlink($file);
+                    $deleted_count++;
+                }
+            }
+        }
+        
+        return $deleted_count;
+    }
+
+    /**
+     * Test method pour créer directement une commande sans authentification
+     */
+    public function testCreateOrder($sid)
+    {
+        if (!$this->loadSession($sid)) {
+            return [
+                'success' => false,
+                'error' => 'Session not found'
+            ];
+        }
+
+        // Créer un nouveau client directement (bypass authentification pour les tests)
+        $buyer_manager = new UcpBuyerManager();
+        
+        // Créer le client directement sans authentification
+        $customer_result = $buyer_manager->createCustomerForTest($this->session_data['buyer']);
+        
+        if (!$customer_result['success']) {
+            return [
+                'success' => false,
+                'error' => 'Failed to create customer: ' . implode(', ', $customer_result['errors'] ?? ['Unknown error'])
+            ];
+        }
+        
+        $customer_id = $customer_result['customer_id'];
+        
+        // Simulation de création panier
+        $cart_id = $this->createTestCart($customer_id);
+        if (!$cart_id) {
+            return [
+                'success' => false,
+                'error' => 'Failed to create test cart'
+            ];
+        }
+
+        // Créer la commande
+        $order_result = $this->createPrestaShopOrder($cart_id, $customer_id);
+        
+        return [
+            'success' => $order_result['success'],
+            'cart_id' => $cart_id,
+            'customer_id' => $customer_id,
+            'order_id' => $order_result['success'] ? $order_result['order_id'] : null,
+            'order_reference' => $order_result['success'] ? $order_result['order_reference'] : null,
+            'error' => $order_result['success'] ? null : $order_result['error']
+        ];
+    }
+
+    /**
+     * Obtenir le transporteur par défaut
+     */
+    private function getDefaultCarrier()
+    {
+        try {
+            // D'abord, essayer de créer un transporteur UCP valide
+            $ucp_carrier_id = $this->createDefaultCarrier();
+            
+            // Vérifier que le transporteur est bien créé et actif
+            $sql = 'SELECT id_carrier FROM ' . _DB_PREFIX_ . 'carrier WHERE id_carrier = ' . (int)$ucp_carrier_id . ' AND active = 1 AND deleted = 0';
+            $carrier_id = Db::getInstance()->getValue($sql);
+            
+            if ($carrier_id) {
+                return (int)$carrier_id;
+            }
+            
+            // Sinon, prendre le premier transporteur actif disponible
+            $sql = 'SELECT id_carrier FROM ' . _DB_PREFIX_ . 'carrier WHERE active = 1 AND deleted = 0 ORDER BY position ASC';
+            $carriers = Db::getInstance()->executeS($sql);
+            
+            if (!empty($carriers)) {
+                return (int)$carriers[0]['id_carrier'];
+            }
+            
+            return 1; // Fallback ultime
+        } catch (Exception $e) {
+            error_log('UCP: Error getting default carrier: ' . $e->getMessage());
+            return 1; // Fallback
+        }
+    }
+
+    /**
+     * Créer un transporteur par défaut
+     */
+    private function createDefaultCarrier()
+    {
+        try {
+            $carrier = new Carrier();
+            $carrier->name = 'UCP Standard Delivery';
+            $carrier->id_tax_rules_group = 0;
+            $carrier->active = 1;
+            $carrier->deleted = 0;
+            $carrier->shipping_handling = 1;
+            $carrier->range_behavior = 0;
+            $carrier->is_module = 0;
+            $carrier->is_free = 1;
+            $carrier->shipping_external = 0;
+            $carrier->need_range = 0;
+            $carrier->position = 1;
+            $carrier->max_width = 0;
+            $carrier->max_height = 0;
+            $carrier->max_depth = 0;
+            $carrier->max_weight = 0;
+            $carrier->grade = 0;
+            
+            foreach (Language::getLanguages() as $lang) {
+                $carrier->delay[$lang['id_lang']] = 'UCP Standard Delivery';
+            }
+            
+            if ($carrier->add()) {
+                // Ajouter toutes les zones pour être sûr que le transporteur soit disponible
+                $zones = Zone::getZones();
+                foreach ($zones as $zone) {
+                    Db::getInstance()->execute('INSERT INTO ' . _DB_PREFIX_ . 'carrier_zone (id_carrier, id_zone) VALUES (' . (int)$carrier->id . ', ' . (int)$zone['id_zone'] . ')');
+                }
+                
+                // Ajouter les prix par défaut (gratuit) pour toutes les zones
+                $range_price = new RangePrice();
+                $range_price->id_carrier = $carrier->id;
+                $range_price->delimiter1 = 0;
+                $range_price->delimiter2 = 10000;
+                if ($range_price->add()) {
+                    foreach ($zones as $zone) {
+                        Db::getInstance()->execute('INSERT INTO ' . _DB_PREFIX_ . 'delivery (id_carrier, id_range_price, id_range_weight, id_zone, price) VALUES (' . (int)$carrier->id . ', ' . (int)$range_price->id . ', 0, ' . (int)$zone['id_zone'] . ', 0)');
+                    }
+                }
+                
+                // Ajouter les poids aussi
+                $range_weight = new RangeWeight();
+                $range_weight->id_carrier = $carrier->id;
+                $range_weight->delimiter1 = 0;
+                $range_weight->delimiter2 = 1000;
+                if ($range_weight->add()) {
+                    foreach ($zones as $zone) {
+                        Db::getInstance()->execute('INSERT INTO ' . _DB_PREFIX_ . 'delivery (id_carrier, id_range_price, id_range_weight, id_zone, price) VALUES (' . (int)$carrier->id . ', 0, ' . (int)$range_weight->id . ', ' . (int)$zone['id_zone'] . ', 0)');
+                    }
+                }
+                
+                return $carrier->id;
+            }
+        } catch (Exception $e) {
+            error_log('UCP: Error creating default carrier: ' . $e->getMessage());
+        }
+        
+        return 1; // Fallback
+    }
+
+    /**
+     * Ajouter les détails de la commande (produits)
+     */
+    private function addOrderDetails($order, $cart)
+    {
+        try {
+            $products = $cart->getProducts();
+            
+            foreach ($products as $product) {
+                $order_detail = new OrderDetail();
+                
+                $order_detail->id_order = $order->id;
+                $order_detail->product_id = $product['id_product'];
+                $order_detail->product_attribute_id = $product['id_product_attribute'] ?? 0;
+                $order_detail->product_name = $product['name'];
+                $order_detail->product_quantity = $product['quantity'];
+                $order_detail->product_price = $product['price'];
+                $order_detail->product_quantity_in_stock = $product['quantity_available'];
+                $order_detail->product_quantity_refunded = 0;
+                $order_detail->product_quantity_return = 0;
+                $order_detail->product_quantity_reinjected = 0;
+                $order_detail->id_shop = $order->id_shop;
+                $order_detail->id_tax_rules_group = $product['id_tax_rules_group'] ?? 0;
+                $order_detail->id_customization = $product['id_customization'] ?? 0;
+                $order_detail->product_ean13 = $product['ean13'] ?? '';
+                $order_detail->product_upc = $product['upc'] ?? '';
+                $order_detail->product_reference = $product['reference'] ?? '';
+                $order_detail->product_supplier_reference = $product['supplier_reference'] ?? '';
+                $order_detail->product_weight = $product['weight'];
+                $order_detail->id_warehouse = 0;
+                $order_detail->unit_price_tax_excl = $product['price'];
+                $order_detail->unit_price_tax_incl = $product['price_wt'];
+                $order_detail->total_price_tax_excl = $product['total'];
+                $order_detail->total_price_tax_incl = $product['total_wt'];
+                $order_detail->total_shipping_price_tax_excl = 0;
+                $order_detail->total_shipping_price_tax_incl = 0;
+                $order_detail->purchase_supplier_price = 0;
+                $order_detail->original_product_price = $product['price'];
+                $order_detail->original_wholesale_price = $product['wholesale_price'];
+                $order_detail->product_quantity_discount = 0;
+                $order_detail->discount_quantity_applied = 0;
+                $order_detail->discount_type = 'amount';
+                $order_detail->discount_value = 0;
+                $order_detail->discount_quantity = 0;
+                $order_detail->id_order_invoice = 0;
+                $order_detail->id_order_detail = 0;
+                $order_detail->ecotax = 0;
+                $order_detail->ecotax_tax_rate = 0;
+                $order_detail->download_hash = '';
+                $order_detail->download_nb = 0;
+                $order_detail->download_deadline = '0000-00-00 00:00:00';
+                
+                if (!$order_detail->add()) {
+                    error_log('UCP: Failed to add order detail for product ' . $product['id_product']);
+                    return false;
+                }
+            }
+            
+            return true;
+        } catch (Exception $e) {
+            error_log('UCP: Exception adding order details: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Mettre à jour les quantités de produits
+     */
+    private function updateProductQuantities($cart)
+    {
+        try {
+            $products = $cart->getProducts();
+            
+            foreach ($products as $product) {
+                // Utiliser une méthode plus simple pour mettre à jour le stock
+                $sql = 'UPDATE ' . _DB_PREFIX_ . 'product 
+                        SET quantity = quantity - ' . (int)$product['quantity'] . '
+                        WHERE id_product = ' . (int)$product['id_product'];
+                Db::getInstance()->execute($sql);
+                
+                // Mettre à jour aussi les attributs si nécessaire
+                if ($product['id_product_attribute'] > 0) {
+                    $sql = 'UPDATE ' . _DB_PREFIX_ . 'product_attribute 
+                            SET quantity = quantity - ' . (int)$product['quantity'] . '
+                            WHERE id_product = ' . (int)$product['id_product'] . '
+                            AND id_product_attribute = ' . (int)$product['id_product_attribute'];
+                    Db::getInstance()->execute($sql);
+                }
+            }
+            
+            return true;
+        } catch (Exception $e) {
+            error_log('UCP: Exception updating product quantities: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Créer un panier de test
+     */
+    private function createTestCart($customer_id)
+    {
+        try {
+            $cart = new Cart();
+            $cart->id_customer = $customer_id;
+            $cart->id_currency = Configuration::get('PS_CURRENCY_DEFAULT');
+            $cart->id_lang = Configuration::get('PS_LANG_DEFAULT');
+            $cart->id_shop = 1;
+            $cart->id_shop_group = 1;
+            
+            // Ajouter une adresse par défaut si nécessaire
+            $address_id = $this->ensureCustomerAddress($customer_id);
+            if ($address_id) {
+                $cart->id_address_delivery = $address_id;
+                $cart->id_address_invoice = $address_id;
+            }
+            
+            // Définir un transporteur
+            $cart->id_carrier = $this->getDefaultCarrier();
+            
+            if ($cart->add()) {
+                // Ajouter des produits de test
+                foreach ($this->session_data['line_items'] as $item) {
+                    $cart->updateQty($item['quantity'], $item['product_id']);
+                }
+                
+                // Mettre à jour le panier après ajout des produits
+                $cart->update();
+                
+                return $cart->id;
+            }
+        } catch (Exception $e) {
+            error_log('Test cart creation error: ' . $e->getMessage());
         }
         return false;
     }
