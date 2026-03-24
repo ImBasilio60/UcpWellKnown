@@ -149,12 +149,36 @@ class Ucpwellknowncheckout_sessionsModuleFrontController extends ModuleFrontCont
             $checkout_id = $this->generateCheckoutId();
 
             // Create temporary UCP session (NO PrestaShop interaction)
-            $session_data = $this->session_manager->createSession(
-                $checkout_id,
-                $input['buyer'],
-                $input['line_items'],
-                $headers
-            );
+            try {
+                $session_data = $this->session_manager->createSession(
+                    $checkout_id,
+                    $input['buyer'],
+                    $input['line_items'],
+                    $headers
+                );
+            } catch (Exception $e) {
+                // Intercepter les erreurs de validation des champs buyer
+                if (strpos($e->getMessage(), 'Missing required buyer fields') !== false) {
+                    header('HTTP/1.1 400 Bad Request');
+                    return [
+                        'error' => 'Missing required buyer fields',
+                        'code' => 400,
+                        'message' => $e->getMessage(),
+                        'required_fields' => [
+                            'email',
+                            'first_name',
+                            'last_name', 
+                            'address',
+                            'city',
+                            'postal_code',
+                            'country',
+                            'phone'
+                        ],
+                        'timestamp' => date('c')
+                    ];
+                }
+                throw $e; // Relancer les autres exceptions
+            }
 
             // Log successful checkout session creation (temporary)
             PrestaShopLogger::addLog(

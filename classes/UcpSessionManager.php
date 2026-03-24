@@ -23,6 +23,12 @@ class UcpSessionManager
      */
     public function createSession($sid, $buyer_data, $line_items, $headers)
     {
+        // Valider les champs obligatoires du buyer avant de continuer
+        $buyer_validation = $this->validateRequiredBuyerFields($buyer_data);
+        if (!$buyer_validation['valid']) {
+            throw new Exception('Missing required buyer fields: ' . implode(', ', $buyer_validation['missing_fields']));
+        }
+        
         $this->session_id = $sid;
         
         $this->session_data = [
@@ -63,6 +69,19 @@ class UcpSessionManager
         }
 
         if (isset($updates['buyer'])) {
+            // Valider les champs obligatoires du buyer avant de mettre à jour
+            $buyer_validation = $this->validateRequiredBuyerFields($updates['buyer']);
+            if (!$buyer_validation['valid']) {
+                // Ajouter l'erreur de validation aux données de session
+                $this->session_data['validation_errors'][] = [
+                    'field' => 'buyer',
+                    'message' => 'Missing required buyer fields: ' . implode(', ', $buyer_validation['missing_fields']),
+                    'missing_fields' => $buyer_validation['missing_fields']
+                ];
+                $this->saveSession();
+                return $this->session_data;
+            }
+            
             $this->session_data['buyer'] = $this->normalizeBuyerData($updates['buyer']);
         }
 
@@ -170,20 +189,50 @@ class UcpSessionManager
     }
 
     /**
+     * Valider les champs obligatoires du buyer
+     */
+    private function validateRequiredBuyerFields($buyer_data)
+    {
+        $required_fields = [
+            'email',
+            'first_name', 
+            'last_name',
+            'address',
+            'city',
+            'postal_code',
+            'country',
+            'phone'
+        ];
+        
+        $missing_fields = [];
+        
+        foreach ($required_fields as $field) {
+            if (!isset($buyer_data[$field]) || empty(trim($buyer_data[$field]))) {
+                $missing_fields[] = $field;
+            }
+        }
+        
+        return [
+            'valid' => empty($missing_fields),
+            'missing_fields' => $missing_fields
+        ];
+    }
+
+    /**
      * Normaliser les données du buyer
      */
     private function normalizeBuyerData($buyer_data)
     {
         return [
-            'email' => strtolower(trim($buyer_data['email'])),
-            'first_name' => trim(ucwords(strtolower($buyer_data['first_name']))),
-            'last_name' => trim(ucwords(strtolower($buyer_data['last_name']))),
-            'phone' => !empty($buyer_data['phone']) ? trim($buyer_data['phone']) : null,
-            'company' => !empty($buyer_data['company']) ? trim($buyer_data['company']) : null,
-            'address' => trim($buyer_data['address']),
-            'city' => trim(ucwords(strtolower($buyer_data['city']))),
-            'postal_code' => trim($buyer_data['postal_code']),
-            'country' => trim(strtoupper($buyer_data['country']))
+            'email' => isset($buyer_data['email']) ? strtolower(trim($buyer_data['email'])) : '',
+            'first_name' => isset($buyer_data['first_name']) ? trim(ucwords(strtolower($buyer_data['first_name']))) : '',
+            'last_name' => isset($buyer_data['last_name']) ? trim(ucwords(strtolower($buyer_data['last_name']))) : '',
+            'phone' => isset($buyer_data['phone']) ? trim($buyer_data['phone']) : null,
+            'company' => isset($buyer_data['company']) ? trim($buyer_data['company']) : null,
+            'address' => isset($buyer_data['address']) ? trim($buyer_data['address']) : '',
+            'city' => isset($buyer_data['city']) ? trim(ucwords(strtolower($buyer_data['city']))) : '',
+            'postal_code' => isset($buyer_data['postal_code']) ? trim($buyer_data['postal_code']) : '',
+            'country' => isset($buyer_data['country']) ? trim(strtoupper($buyer_data['country'])) : ''
         ];
     }
 
@@ -633,7 +682,29 @@ class UcpSessionManager
     private function saveSession()
     {
         $file_path = $this->storage_path . $this->session_id . '.json';
-        file_put_contents($file_path, json_encode($this->session_data, JSON_PRETTY_PRINT));
+        
+        // Créer le répertoire si nécessaire
+        if (!file_exists($this->storage_path)) {
+            if (!mkdir($this->storage_path, 0755, true)) {
+                error_log('UCP ERROR: Failed to create session directory: ' . $this->storage_path);
+                return false;
+            }
+        }
+        
+        // Vérifier les permissions d'écriture
+        if (!is_writable($this->storage_path)) {
+            error_log('UCP ERROR: Session directory is not writable: ' . $this->storage_path);
+            return false;
+        }
+        
+        $result = file_put_contents($file_path, json_encode($this->session_data, JSON_PRETTY_PRINT));
+        
+        if ($result === false) {
+            error_log('UCP ERROR: Failed to write session file: ' . $file_path);
+            return false;
+        }
+        
+        return true;
     }
 
     /**

@@ -1,6 +1,6 @@
 # UCP WellKnown Module
 
-Module PrestaShop pour l'intégration du protocole UCP (Universal Checkout Protocol) avec gestion complète des sessions de paiement.
+Module PrestaShop pour l'intégration du protocole UCP (Universal Commerce Protocol) avec gestion complète des sessions de paiement.
 
 ## Vue d'ensemble
 
