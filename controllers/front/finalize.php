@@ -85,6 +85,42 @@ class UcpwellknownfinalizeModuleFrontController extends ModuleFrontController
                 ];
             }
 
+            // Validate required payment and confirmation fields
+            $validation = $this->validatePaymentConfirmation($input);
+            if (!$validation['valid']) {
+                if ($validation['terms_not_accepted'] ?? false) {
+                    header('HTTP/1.1 400 Bad Request');
+                    return [
+                        'error' => [
+                            'code' => 'TERMS_NOT_ACCEPTED',
+                            'message' => 'User must accept terms and conditions before finalizing checkout'
+                        ],
+                        'timestamp' => date('c')
+                    ];
+                } elseif ($validation['payment_not_confirmed'] ?? false) {
+                    header('HTTP/1.1 400 Bad Request');
+                    return [
+                        'error' => [
+                            'code' => 'PAYMENT_NOT_CONFIRMED',
+                            'message' => 'Payment must be confirmed before finalizing checkout',
+                            'details' => [
+                                'current_status' => $validation['current_status'],
+                                'expected_status' => 'paid'
+                            ]
+                        ],
+                        'timestamp' => date('c')
+                    ];
+                } else {
+                    header('HTTP/1.1 400 Bad Request');
+                    return [
+                        'error' => 'Missing required fields',
+                        'code' => 400,
+                        'details' => $validation['errors'],
+                        'timestamp' => date('c')
+                    ];
+                }
+            }
+
             // Finalize the session (create PrestaShop cart and customer)
             $finalize_result = $this->session_manager->finalizeSession($sid);
             
@@ -178,12 +214,23 @@ class UcpwellknownfinalizeModuleFrontController extends ModuleFrontController
     {
         $input = file_get_contents('php://input');
         if (empty($input)) {
-            return [];
+            throw new Exception('Empty request body. Required fields for finalization:
+{
+  "payment": {
+    "method": "card|paypal|...",
+    "provider": "stripe|adyen|...",
+    "transaction_id": "unique_transaction_id",
+    "status": "paid"
+  },
+  "confirmation": {
+    "accepted_terms": true
+  }
+}');
         }
 
         $decoded = json_decode($input, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid JSON input: ' . json_last_error_msg());
+            throw new Exception('Invalid JSON input: ' . json_last_error_msg() . '. Expected valid JSON format.');
         }
 
         return $decoded;
@@ -203,5 +250,67 @@ class UcpwellknownfinalizeModuleFrontController extends ModuleFrontController
 
         echo json_encode($error_response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         exit;
+    }
+
+    /**
+     * Valider les champs payment et confirmation requis
+     */
+    private function validatePaymentConfirmation($input)
+    {
+        $errors = [];
+
+        // Validation du champ payment
+        if (empty($input['payment'])) {
+            $errors[] = 'Payment information is required';
+        } else {
+            $payment = $input['payment'];
+            
+            // Validation des sous-champs de payment
+            if (empty($payment['method'])) {
+                $errors[] = 'Payment method is required';
+            }
+            if (empty($payment['provider'])) {
+                $errors[] = 'Payment provider is required';
+            }
+            if (empty($payment['transaction_id'])) {
+                $errors[] = 'Payment transaction_id is required';
+            }
+            if (empty($payment['status'])) {
+                $errors[] = 'Payment status is required';
+            } else {
+                // Vérifier si le statut est "paid"
+                if ($payment['status'] !== 'paid') {
+                    return [
+                        'valid' => false,
+                        'payment_not_confirmed' => true,
+                        'current_status' => $payment['status'],
+                        'errors' => ['Payment must be confirmed before finalizing checkout']
+                    ];
+                }
+            }
+        }
+
+        // Validation du champ confirmation
+        if (empty($input['confirmation'])) {
+            $errors[] = 'Confirmation information is required';
+        } else {
+            $confirmation = $input['confirmation'];
+            
+            // Validation des sous-champs de confirmation
+            if (!isset($confirmation['accepted_terms']) || $confirmation['accepted_terms'] !== true) {
+                return [
+                    'valid' => false,
+                    'terms_not_accepted' => true,
+                    'errors' => ['User must accept terms and conditions before finalizing checkout']
+                ];
+            }
+        }
+
+        return [
+            'valid' => empty($errors),
+            'terms_not_accepted' => false,
+            'payment_not_confirmed' => false,
+            'errors' => $errors
+        ];
     }
 }

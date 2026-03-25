@@ -153,6 +153,30 @@ Le module UCP WellKnown permet de créer et gérer des sessions de checkout séc
 **Méthode**: POST  
 **URL**: `/prestashop/module/ucpwellknown/checkout_sessions?sid={id}&action=finalize`
 
+**Payload requis**:
+```json
+{
+  "payment": {
+    "method": "card",
+    "provider": "stripe",
+    "transaction_id": "txn_123456",
+    "status": "paid"
+  },
+  "confirmation": {
+    "accepted_terms": true
+  }
+}
+```
+
+**Champs payment obligatoires**:
+- `method` - Méthode de paiement (card, paypal, etc.)
+- `provider` - Fournisseur de paiement (stripe, adyen, etc.)
+- `transaction_id` - ID unique de la transaction
+- `status` - Statut du paiement (paid, pending, failed)
+
+**Champs confirmation obligatoires**:
+- `accepted_terms` - Doit être `true` pour confirmer l'acceptation
+
 **Réponse**:
 ```json
 {
@@ -346,6 +370,8 @@ Toutes les requêtes sont loggées avec:
 - Données invalides ou champs manquants
 - Code promo invalide
 - Format JSON incorrect
+- **Termes et conditions non acceptés** (`TERMS_NOT_ACCEPTED`)
+- **Paiement non confirmé** (`PAYMENT_NOT_CONFIRMED`)
 
 ### HTTP 401 - Unauthorized
 - En-têtes UCP manquants
@@ -382,6 +408,58 @@ location = /.well-known/ucp {
     rewrite ^ /index.php?fc=module&module=ucpwellknown&controller=ucp last;
 }
 ```
+
+## Format des réponses
+
+### Succès
+```json
+{
+  "status": "success",
+  "data": {...},
+  "request_info": {
+    "request_id": "{uuid}",
+    "timestamp": "2026-03-24T15:30:00+00:00"
+  }
+}
+```
+
+### Erreur
+```json
+{
+  "error": "Error description",
+  "code": 400,
+  "details": {...},
+  "timestamp": "2026-03-24T15:30:00+00:00"
+}
+```
+
+### Erreur spécifique - Termes non acceptés
+```json
+{
+  "error": {
+    "code": "TERMS_NOT_ACCEPTED",
+    "message": "User must accept terms and conditions before finalizing checkout"
+  },
+  "timestamp": "2026-03-24T15:30:00+00:00"
+}
+```
+
+### Erreur spécifique - Paiement non confirmé
+```json
+{
+  "error": {
+    "code": "PAYMENT_NOT_CONFIRMED",
+    "message": "Payment must be confirmed before finalizing checkout",
+    "details": {
+      "current_status": "pending",
+      "expected_status": "paid"
+    }
+  },
+  "timestamp": "2026-03-24T15:30:00+00:00"
+}
+```
+
+---
 
 ## Intégration
 

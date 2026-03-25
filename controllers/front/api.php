@@ -149,12 +149,16 @@ class UcpWellKnownApiModuleFrontController extends ModuleFrontController
     {
         $input = file_get_contents('php://input');
         if (empty($input)) {
-            return null;
+            throw new Exception('Empty request body. API endpoints accept JSON data for testing. Example:
+{
+  "test_field": "test_value",
+  "data": {...}
+}');
         }
 
         $decoded = json_decode($input, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new Exception('Invalid JSON input: ' . json_last_error_msg());
+            throw new Exception('Invalid JSON input: ' . json_last_error_msg() . '. Expected valid JSON format.');
         }
 
         return $decoded;
