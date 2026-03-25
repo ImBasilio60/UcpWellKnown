@@ -217,8 +217,8 @@ class UcpwellknownfinalizeModuleFrontController extends ModuleFrontController
             throw new Exception('Empty request body. Required fields for finalization:
 {
   "payment": {
-    "method": "card|paypal|...",
-    "provider": "stripe|adyen|...",
+    "method": "card"
+    "provider": "stripe"
     "transaction_id": "unique_transaction_id",
     "status": "paid"
   },

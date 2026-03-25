@@ -13,7 +13,7 @@ class UcpWellKnownUcpModuleFrontController extends ModuleFrontController
             "ucp" => [
                 "version" => "2026-03-13",
                 "supported_versions" => [
-                    "2026-03-13" => "http://localhost/prestashop/.well-known/ucp"
+                    "2026-03-13" => "https://www.passioncampagne9.projets-omega.net/.well-known/ucp"
                 ],
                 "services" => [
                     "dev.ucp.shopping" => [
@@ -21,7 +21,7 @@ class UcpWellKnownUcpModuleFrontController extends ModuleFrontController
                             "version" => "2026-03-13",
                             "spec" => "https://ucp.dev/specification/overview/",
                             "transport" => "mcp",
-                            "endpoint" => "http://localhost/prestashop/api/ucp/mcp",
+                            "endpoint" => "https://www.passioncampagne9.projets-omega.net/api/ucp/mcp",
                             "schema" => "https://ucp.dev/services/shopping/openrpc.json"
                         ]
                     ]
@@ -36,18 +36,23 @@ class UcpWellKnownUcpModuleFrontController extends ModuleFrontController
                     ]
                 ],
                 "payment_handlers" => [
-                    "com.google.pay" => [
+                    "com.stripe" => [
                         [
-                            "id" => "gpay",
+                            "id" => "stripe",
                             "version" => "2026-03-13",
-                            "spec" => "https://pay.google.com/gp/p/ucp/2026-03-13/",
-                            "schema" => "https://pay.google.com/gp/p/ucp/2026-03-13/schemas/config.json",
+                            "spec" => "https://stripe.com/payments/ucp/2026-03-13/",
+                            "schema" => "https://stripe.com/payments/ucp/2026-03-13/schemas/config.json",
                             "config" => [
-                                "api_version" => 2,
+                                "api_version" => "2026-03-13",
                                 "merchant_info" => [
-                                    "merchant_name" => "My Shop",
-                                    "merchant_id" => "123456789",
-                                    "merchant_origin" => "localhost"
+                                    "merchant_name" => "Randevteam",
+                                    "merchant_id" => "acct_123456789",
+                                    "merchant_origin" => "https://www.passioncampagne9.projets-omega.net"
+                                ],
+                                "payment_methods" => [
+                                    "card",
+                                    "alipay",
+                                    "apple_pay"
                                 ]
                             ]
                         ]
